@@ -1,0 +1,13 @@
+[package]
+name = "ctdozlite-android-native"
+version = "0.1.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+
+[lib]
+name = "ctdozlite_android"
+crate-type = ["cdylib"]
+
+[dependencies]
+ctdozlite-core = { path = "../../crates/ctdozlite-core" }
+jni = "0.21.1"
