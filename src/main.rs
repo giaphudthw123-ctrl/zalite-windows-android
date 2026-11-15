@@ -89,6 +89,21 @@ async fn main() -> Result<()> {
         }
     }
     let data_path = data_dir::initialize(&args)?;
+    #[cfg(target_os = "windows")]
+    let _single_instance = {
+        let gui_launch = args.iter().any(|arg| arg == "--gui")
+            || !args
+                .iter()
+                .any(|arg| arg == "--tui" || arg == "--qr" || arg.starts_with("--phone"));
+        if gui_launch && !args.iter().any(|arg| arg == "--logout") {
+            match zalo_rust::single_instance::SingleInstance::acquire(&data_path)? {
+                Some(instance) => Some(instance),
+                None => return Ok(()),
+            }
+        } else {
+            None
+        }
+    };
     zalo_rust::video_tools::refresh(&data_path).await;
     if args.iter().any(|a| a == "--print-data-dir") {
         println!("{}", data_path.display());

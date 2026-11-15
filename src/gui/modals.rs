@@ -330,9 +330,14 @@ impl ZaloGuiApp {
         let mut close_menu = false;
         let mut do_logout = false;
         let mut do_wipe = false;
+        let popup_y = if self.profile_menu_anchor_bottom {
+            (ctx.screen_rect().height() - 430.0).max(10.0)
+        } else {
+            44.0
+        };
         let area_resp = egui::Area::new(Id::new("left_rail_profile_popover"))
             .order(egui::Order::Foreground)
-            .fixed_pos(Pos2::new(68.0, 44.0))
+            .fixed_pos(Pos2::new(68.0, popup_y))
             .show(ctx, |ui| {
                 egui::Frame::none()
                     .fill(pal.bg_elevated)
@@ -373,6 +378,23 @@ impl ZaloGuiApp {
                         ui.add_space(6.0);
                         ui.separator();
                         ui.add_space(4.0);
+                        if ui
+                            .add_sized(
+                                [200.0, 30.0],
+                                egui::Button::new(
+                                    RichText::new(format!("{}  Cài đặt", lucide::SETTINGS))
+                                        .size(12.2)
+                                        .color(pal.text_primary),
+                                )
+                                .fill(Color32::TRANSPARENT),
+                            )
+                            .on_hover_cursor(CursorIcon::PointingHand)
+                            .clicked()
+                        {
+                            self.settings_modal_open = true;
+                            self.settings_tab = SettingsTab::General;
+                            close_menu = true;
+                        }
                         if ui
                             .add_sized(
                                 [200.0, 28.0],
@@ -2111,6 +2133,25 @@ impl ZaloGuiApp {
                                                 });
                                             ui.add_space(14.0);
 
+                                            #[cfg(target_os = "windows")]
+                                            {
+                                                ui.label(RichText::new("Hạn chế chụp cửa sổ trên Windows").color(pal.text_primary).size(13.5).strong());
+                                                ui.horizontal(|ui| {
+                                                    ui.vertical(|ui| {
+                                                        ui.label(RichText::new("Ẩn cửa sổ này khỏi một số công cụ ghi/chụp màn hình").color(pal.text_primary).size(13.0));
+                                                        ui.label(RichText::new("Không ngăn máy ảnh hoặc thiết bị khác chụp màn hình.").color(pal.text_secondary).size(11.5));
+                                                    });
+                                                    ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                                                        if render_toggle_switch(ui, &mut self.settings.protect_window_capture, pal).changed() {
+                                                            self.capture_affinity_applied = None;
+                                                            self.settings.save();
+                                                            ui.ctx().request_repaint();
+                                                        }
+                                                    });
+                                                });
+                                                ui.add_space(14.0);
+                                            }
+
                                             ui.label(RichText::new("Tin nhắn và cuộc gọi").color(pal.text_primary).size(13.5).strong());
                                             ui.add_space(6.0);
                                             egui::Frame::none()
@@ -3437,14 +3478,8 @@ impl ZaloGuiApp {
             }
         }
         if pick_dl_dir {
-            if let Some(folder) = pick_native_file_dialog(false) {
-                let dir_path = folder.parent().unwrap_or(&folder).to_path_buf();
-                self.settings.download_dir = dir_path.display().to_string();
-                self.settings.save();
-                self.show_toast(format!(
-                    "Đã đổi thư mục lưu file: {}",
-                    self.settings.download_dir
-                ));
+            if let Some(tx) = WORKER_TX.get() {
+                let _ = tx.send(WorkerCmd::PickDownloadDirectory);
             }
         }
         if open_dl_dir {

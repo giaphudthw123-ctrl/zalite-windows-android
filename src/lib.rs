@@ -28,6 +28,8 @@ pub mod qr;
 pub mod quick_messages;
 pub mod reactions;
 pub mod session;
+#[cfg(target_os = "windows")]
+pub mod single_instance;
 pub mod socket;
 pub mod store;
 pub mod tui;

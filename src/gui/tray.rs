@@ -4,11 +4,87 @@
 //! minimising). Tray events arrive on OS threads, so they only set atomic flags and request a
 //! repaint; the UI loop in `update` consumes the flags.
 
+#[cfg(target_os = "windows")]
+use std::ffi::c_void;
+#[cfg(target_os = "windows")]
+use std::sync::atomic::AtomicIsize;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 static TRAY_ACTIVE: AtomicBool = AtomicBool::new(false);
 static SHOW_REQUESTED: AtomicBool = AtomicBool::new(false);
 static QUIT_REQUESTED: AtomicBool = AtomicBool::new(false);
+#[cfg(target_os = "windows")]
+static RESTORE_CONTEXT: std::sync::OnceLock<eframe::egui::Context> = std::sync::OnceLock::new();
+#[cfg(target_os = "windows")]
+static RESTORE_WINDOW: AtomicIsize = AtomicIsize::new(0);
+
+#[cfg(target_os = "windows")]
+#[link(name = "user32")]
+extern "system" {
+    fn GetActiveWindow() -> *mut c_void;
+    fn GetWindowThreadProcessId(window: *mut c_void, process_id: *mut u32) -> u32;
+    fn IsWindow(window: *mut c_void) -> i32;
+    fn ShowWindowAsync(window: *mut c_void, command: i32) -> i32;
+    fn SetForegroundWindow(window: *mut c_void) -> i32;
+}
+#[cfg(target_os = "windows")]
+#[link(name = "kernel32")]
+extern "system" {
+    fn GetCurrentProcessId() -> u32;
+}
+
+#[cfg(target_os = "windows")]
+pub fn register_restore_context(ctx: &eframe::egui::Context) {
+    let _ = RESTORE_CONTEXT.set(ctx.clone());
+}
+
+/// Capture the main HWND on the GUI thread before the user hides it.
+#[cfg(target_os = "windows")]
+pub fn register_restore_window() {
+    if RESTORE_WINDOW.load(Ordering::Relaxed) != 0 {
+        return;
+    }
+    let window = unsafe { GetActiveWindow() };
+    if window.is_null() {
+        return;
+    }
+    let mut owner = 0;
+    if unsafe { GetWindowThreadProcessId(window, &mut owner) } != 0
+        && owner == unsafe { GetCurrentProcessId() }
+    {
+        RESTORE_WINDOW.store(window as isize, Ordering::Release);
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn reveal_native_window() {
+    let window = RESTORE_WINDOW.load(Ordering::Acquire) as *mut c_void;
+    if window.is_null() || unsafe { IsWindow(window) } == 0 {
+        return;
+    }
+    // A hidden winit window may not repaint, so make it visible from the event thread first.
+    unsafe {
+        ShowWindowAsync(window, 9); // SW_RESTORE
+        ShowWindowAsync(window, 5); // SW_SHOW
+        SetForegroundWindow(window);
+    }
+}
+
+fn request_show(ctx: &eframe::egui::Context) {
+    SHOW_REQUESTED.store(true, Ordering::Release);
+    #[cfg(target_os = "windows")]
+    reveal_native_window();
+    ctx.request_repaint();
+}
+
+#[cfg(target_os = "windows")]
+pub fn request_show_from_second_instance() {
+    if let Some(ctx) = RESTORE_CONTEXT.get() {
+        request_show(ctx);
+    } else {
+        SHOW_REQUESTED.store(true, Ordering::Release);
+    }
+}
 
 /// True when a tray icon exists, so hiding the window is recoverable.
 pub fn is_active() -> bool {
@@ -46,8 +122,12 @@ impl Tray {
         let repaint_ctx = ctx.clone();
         MenuEvent::set_event_handler(Some(move |event: MenuEvent| {
             match event.id.0.as_str() {
-                "show" => SHOW_REQUESTED.store(true, Ordering::Relaxed),
-                "quit" => QUIT_REQUESTED.store(true, Ordering::Relaxed),
+                "show" => request_show(&repaint_ctx),
+                "quit" => {
+                    QUIT_REQUESTED.store(true, Ordering::Release);
+                    #[cfg(target_os = "windows")]
+                    reveal_native_window();
+                }
                 _ => {}
             }
             repaint_ctx.request_repaint();
@@ -67,8 +147,7 @@ impl Tray {
                 }
             );
             if restore {
-                SHOW_REQUESTED.store(true, Ordering::Relaxed);
-                repaint_ctx.request_repaint();
+                request_show(&repaint_ctx);
             }
         }));
 

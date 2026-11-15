@@ -472,6 +472,124 @@ pub(super) fn pick_native_file_dialog(images_only: bool) -> Option<std::path::Pa
     }
 }
 
+/// Pick an existing directory for downloads without asking the user to choose a file.
+/// Call this from a blocking worker, never from the egui frame.
+pub(super) fn pick_native_folder_dialog() -> Option<std::path::PathBuf> {
+    #[cfg(target_os = "windows")]
+    {
+        use std::ffi::{c_void, OsString};
+        use std::os::windows::ffi::OsStringExt;
+
+        #[repr(C)]
+        struct BrowseInfoW {
+            owner: *mut c_void,
+            root: *const c_void,
+            display_name: *mut u16,
+            title: *const u16,
+            flags: u32,
+            callback: *const c_void,
+            param: isize,
+            image: i32,
+        }
+        #[link(name = "shell32")]
+        extern "system" {
+            fn SHBrowseForFolderW(info: *const BrowseInfoW) -> *mut c_void;
+            fn SHGetPathFromIDListW(id: *const c_void, path: *mut u16) -> i32;
+        }
+        #[link(name = "user32")]
+        extern "system" {
+            fn GetForegroundWindow() -> *mut c_void;
+            fn GetWindowThreadProcessId(window: *mut c_void, process_id: *mut u32) -> u32;
+        }
+        #[link(name = "kernel32")]
+        extern "system" {
+            fn GetCurrentProcessId() -> u32;
+        }
+        #[link(name = "ole32")]
+        extern "system" {
+            fn CoInitializeEx(reserved: *const c_void, mode: u32) -> i32;
+            fn CoUninitialize();
+            fn CoTaskMemFree(ptr: *mut c_void);
+        }
+
+        let initialized = unsafe { CoInitializeEx(std::ptr::null(), 2) } >= 0;
+        if !initialized {
+            return None;
+        }
+        let title: Vec<u16> = "Chọn thư mục lưu tệp Zalo\0".encode_utf16().collect();
+        let mut display = vec![0u16; 260];
+        let foreground = unsafe { GetForegroundWindow() };
+        let mut foreground_owner = 0;
+        let owner = if !foreground.is_null()
+            && unsafe { GetWindowThreadProcessId(foreground, &mut foreground_owner) } != 0
+            && foreground_owner == unsafe { GetCurrentProcessId() }
+        {
+            foreground
+        } else {
+            std::ptr::null_mut()
+        };
+        let info = BrowseInfoW {
+            owner,
+            root: std::ptr::null(),
+            display_name: display.as_mut_ptr(),
+            title: title.as_ptr(),
+            flags: 0x0001 | 0x0040 | 0x0010, // BIF_RETURNONLYFSDIRS | BIF_NEWDIALOGSTYLE | BIF_EDITBOX
+            callback: std::ptr::null(),
+            param: 0,
+            image: 0,
+        };
+        let id = unsafe { SHBrowseForFolderW(&info) };
+        let selected = if id.is_null() {
+            None
+        } else {
+            let mut path = vec![0u16; 260];
+            let ok = unsafe { SHGetPathFromIDListW(id, path.as_mut_ptr()) } != 0;
+            unsafe { CoTaskMemFree(id) };
+            if ok {
+                let end = path.iter().position(|ch| *ch == 0).unwrap_or(path.len());
+                Some(std::path::PathBuf::from(OsString::from_wide(&path[..end])))
+            } else {
+                None
+            }
+        };
+        unsafe { CoUninitialize() };
+        selected.filter(|path| path.is_dir())
+    }
+    #[cfg(target_os = "macos")]
+    {
+        let output = std::process::Command::new("osascript")
+            .args([
+                "-e",
+                "POSIX path of (choose folder with prompt \"Chọn thư mục lưu tệp Zalo\")",
+            ])
+            .output()
+            .ok()?;
+        output
+            .status
+            .success()
+            .then(|| std::path::PathBuf::from(String::from_utf8_lossy(&output.stdout).trim()))
+            .filter(|path| path.is_dir())
+    }
+    #[cfg(not(any(target_os = "windows", target_os = "macos")))]
+    {
+        for (program, args) in [
+            ("zenity", vec!["--file-selection", "--directory"]),
+            ("kdialog", vec!["--getexistingdirectory"]),
+        ] {
+            if let Ok(output) = std::process::Command::new(program).args(args).output() {
+                if output.status.success() {
+                    let path =
+                        std::path::PathBuf::from(String::from_utf8_lossy(&output.stdout).trim());
+                    if path.is_dir() {
+                        return Some(path);
+                    }
+                }
+            }
+        }
+        None
+    }
+}
+
 /// Detect `Ctrl+V` / `Shift+Insert` (Windows) or `Cmd+V` (macOS) reliably even when `egui-winit`
 /// swallows `Key::V` because the system clipboard contains an image instead of UTF-8 text.
 pub(super) fn is_clipboard_paste_triggered(ctx: &egui::Context) -> bool {
@@ -2548,6 +2666,39 @@ pub(super) fn render_message_body(
             }
             return body_action;
         }
+        // Older history entries can identify a photo without retaining its CDN URL.
+        // Show a clear media card instead of exposing the internal "[Hình ảnh]" marker.
+        let card_width = max_text_width.clamp(180.0, 260.0);
+        egui::Frame::none()
+            .fill(pal.bg_elevated)
+            .stroke(Stroke::new(1.0_f32, pal.border))
+            .rounding(Rounding::same(8.0))
+            .inner_margin(Margin::symmetric(12.0, 12.0))
+            .show(ui, |ui| {
+                ui.set_min_width(card_width);
+                ui.horizontal(|ui| {
+                    let (icon_rect, _) = ui.allocate_exact_size(Vec2::splat(28.0), Sense::hover());
+                    draw_icon_image(ui.painter(), icon_rect.center(), 22.0, pal.primary_hover);
+                    ui.label(
+                        RichText::new("Ảnh chưa có dữ liệu xem trước")
+                            .size(12.5)
+                            .color(text_col),
+                    );
+                });
+            });
+        if let Some(caption) = extract_photo_user_caption(msg) {
+            ui.add_space(5.0);
+            render_chat_markdown_block(
+                ui,
+                caption,
+                text_col,
+                pal,
+                sticker_textures,
+                loading_stickers,
+                mention_texts.as_deref(),
+            );
+        }
+        return body_action;
     }
     if is_voice_message(msg) {
         let duration = message_duration_seconds(msg).unwrap_or(0.0);

@@ -127,6 +127,7 @@ pub enum WorkerCmd {
     SaveAppSettings {
         json: String,
     },
+    PickDownloadDirectory,
     /// Read OS authorization without prompting.
     ReadNotificationAuthorization {
         request_id: u64,
@@ -1249,6 +1250,21 @@ pub(super) fn spawn_session_worker(session: Session, gui_tx: GuiTx, egui_ctx: eg
                                 ));
                             }
                         }
+                        WorkerCmd::PickDownloadDirectory => {
+                            let tx = gui_tx.clone();
+                            let ctx = egui_ctx.clone();
+                            tokio::spawn(async move {
+                                let selected = tokio::task::spawn_blocking(|| {
+                                    pick_native_folder_dialog()
+                                        .and_then(|path| path.canonicalize().ok())
+                                })
+                                .await
+                                .ok()
+                                .flatten();
+                                let _ = tx.send(GuiEvent::DownloadDirectoryPicked(selected));
+                                ctx.request_repaint();
+                            });
+                        }
                         WorkerCmd::ReadNotificationAuthorization { request_id }
                         | WorkerCmd::RequestNotificationAuthorization { request_id } => {
                             let request = matches!(
@@ -1651,8 +1667,6 @@ pub(super) fn spawn_session_worker(session: Session, gui_tx: GuiTx, egui_ctx: eg
                                                                 &mut s, data,
                                                             );
                                                         }
-                                                        let _ = s.save_to_file("session.json");
-
                                                         if let Ok(info) =
                                                             crate::login::get_login_info(&s).await
                                                         {
@@ -1664,7 +1678,23 @@ pub(super) fn spawn_session_worker(session: Session, gui_tx: GuiTx, egui_ctx: eg
                                                             }
                                                         }
                                                         let _ = s.sync_profile_me().await;
-                                                        let _ = s.save_to_file("session.json");
+                                                        let ready_to_save = s.login.as_ref().is_some_and(|login| {
+                                                            !login.uin.trim().is_empty()
+                                                        }) && s.zpw_sek.as_ref().is_some_and(|key| !key.is_empty());
+                                                        if !ready_to_save {
+                                                            let _ = gui_tx_clone.send(GuiEvent::LoginFailed(
+                                                                "Máy chủ chưa trả đủ thông tin phiên; hãy thử đăng nhập lại".into(),
+                                                            ));
+                                                            ctx_clone.request_repaint();
+                                                            return;
+                                                        }
+                                                        if s.save_to_file("session.json").is_err() {
+                                                            let _ = gui_tx_clone.send(GuiEvent::LoginFailed(
+                                                                "Không lưu được phiên vào thư mục dữ liệu; hãy kiểm tra quyền ghi".into(),
+                                                            ));
+                                                            ctx_clone.request_repaint();
+                                                            return;
+                                                        }
 
                                                         let uin = s
                                                             .login

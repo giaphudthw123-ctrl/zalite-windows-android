@@ -8,6 +8,15 @@ Xem thêm quy ước tại [ADR 0003 — Chính sách Changelog & Release Notes]
 
 ## [Unreleased]
 
+### Added (Tính năng mới)
+- Thanh công cụ phía trên khung soạn có lối vào GIF cá nhân, tin nhắn nhanh và nhắc việc; menu công cụ cục bộ ở thanh điều hướng mở các tiện ích đang hoạt động.
+- Tùy chọn hạn chế ghi/chụp cửa sổ bằng Windows Display Affinity; đây là cơ chế tốt nhất có thể của hệ điều hành, không ngăn mọi cách ghi hình.
+
+### Fixed (Sửa lỗi)
+- Mở ứng dụng lần hai trên Windows sẽ gọi lại cửa sổ cũ thay vì tạo thêm tiến trình và biểu tượng khay mới (áp dụng cho hai bản chạy đều có sửa đổi này).
+- Hộp chọn nơi lưu tệp chọn thư mục thực sự; lỗi không ghi được phiên sau khi quét QR được báo rõ thay vì âm thầm coi là đăng nhập xong.
+- Khung gõ tin nhắn nhiều dòng và rộng hơn; tên nhóm dùng được chiều rộng tiêu đề, danh sách thành viên thu gọn mặc định, ảnh thiếu URL hiện thẻ trạng thái rõ ràng.
+
 ## [0.3.2] - 2026-11-14
 
 ### Added (Tính năng mới)

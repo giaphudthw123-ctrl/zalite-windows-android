@@ -22,6 +22,8 @@ use crate::qr::QrLogin;
 use crate::session::Session;
 
 mod background;
+#[cfg(target_os = "windows")]
+mod capture_guard;
 mod doc_preview_ui;
 #[cfg(target_os = "macos")]
 mod macos_clipboard;
@@ -46,6 +48,11 @@ use messages::*;
 use stickers::*;
 use theme::*;
 pub use theme::{emoji_to_tex_key, load_app_icon, lucide, REACTION_LIST};
+
+#[cfg(target_os = "windows")]
+pub fn request_restore_from_second_instance() {
+    tray::request_show_from_second_instance();
+}
 pub use worker::WorkerCmd;
 use worker::*;
 
@@ -115,6 +122,7 @@ pub enum GuiEvent {
         avatar: Option<String>,
     },
     LoginFailed(String),
+    DownloadDirectoryPicked(Option<std::path::PathBuf>),
     ThreadsUpdated(Vec<Thread>),
     MessageQueuesRefreshed {
         account_uin: String,
@@ -555,6 +563,8 @@ struct AppSettings {
     block_typing: bool,
     block_delivered: bool,
     block_seen: bool,
+    #[cfg(target_os = "windows")]
+    protect_window_capture: bool,
     allow_call_from: String,
     allow_search_by_phone: bool,
     friend_src_qr: bool,
@@ -624,6 +634,8 @@ impl Default for AppSettings {
             block_typing: false,
             block_delivered: false,
             block_seen: false,
+            #[cfg(target_os = "windows")]
+            protect_window_capture: false,
             allow_message_from: "Tất cả mọi người".into(),
             allow_call_from: "Bạn bè và người lạ từng liên hệ".into(),
             allow_search_by_phone: true,
@@ -811,6 +823,7 @@ pub struct ZaloGuiApp {
 
     info_drawer_open: bool,
     profile_menu_open: bool,
+    profile_menu_anchor_bottom: bool,
     /// "Xoá dữ liệu tin nhắn cục bộ" is pending confirmation (#21).
     wipe_confirm_open: bool,
     toast_notice: Option<(String, std::time::Instant)>,
@@ -898,8 +911,12 @@ pub struct ZaloGuiApp {
     group_members_map: HashMap<String, Vec<crate::chat::SidebarMember>>,
     fetching_group_members: HashSet<String>,
     group_member_search: String,
+    group_members_expanded: bool,
+    business_menu_open: bool,
     user_online_map: HashMap<String, (bool, String)>,
     allow_quit: bool,
+    #[cfg(target_os = "windows")]
+    capture_affinity_applied: Option<bool>,
     /// Tray icon handle; dropping it removes the icon.
     _tray: Option<tray::Tray>,
     settings_modal_open: bool,
@@ -1037,6 +1054,8 @@ impl ZaloGuiApp {
         dev_mode: bool,
         initial_threads: Vec<Thread>,
     ) -> Self {
+        #[cfg(target_os = "windows")]
+        tray::register_restore_context(&cc.egui_ctx);
         setup_custom_fonts(&cc.egui_ctx);
         let mut loaded_settings = AppSettings::load();
         if session.proxy_url.is_none() && !loaded_settings.proxy_url.trim().is_empty() {
@@ -1170,6 +1189,7 @@ impl ZaloGuiApp {
             status_msg: "Trực tuyến · Sẵn sàng".into(),
             info_drawer_open: loaded_settings.info_drawer_open,
             profile_menu_open: false,
+            profile_menu_anchor_bottom: false,
             wipe_confirm_open: false,
             toast_notice: None,
             phone_modal_open: false,
@@ -1249,8 +1269,12 @@ impl ZaloGuiApp {
             group_members_map: HashMap::new(),
             fetching_group_members: HashSet::new(),
             group_member_search: String::new(),
+            group_members_expanded: false,
+            business_menu_open: false,
             user_online_map: HashMap::new(),
             allow_quit: false,
+            #[cfg(target_os = "windows")]
+            capture_affinity_applied: None,
             _tray: tray::Tray::new(&cc.egui_ctx),
             settings_modal_open: false,
             settings_tab: SettingsTab::General,
@@ -1515,6 +1539,15 @@ impl ZaloGuiApp {
                     self.login_in_progress = false;
                     self.login_status_msg = format!("Lỗi đăng nhập: {err}");
                 }
+                GuiEvent::DownloadDirectoryPicked(Some(path)) => {
+                    self.settings.download_dir = path.display().to_string();
+                    self.settings.save();
+                    self.show_toast(format!(
+                        "Đã chọn thư mục lưu tệp: {}",
+                        self.settings.download_dir
+                    ));
+                }
+                GuiEvent::DownloadDirectoryPicked(None) => {}
                 event @ (GuiEvent::ThreadsUpdated(_) | GuiEvent::MessageQueuesRefreshed { .. }) => {
                     let updates = match event {
                         GuiEvent::ThreadsUpdated(threads) => threads,
@@ -2935,11 +2968,28 @@ impl ZaloGuiApp {
 
 impl eframe::App for ZaloGuiApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        #[cfg(target_os = "windows")]
+        tray::register_restore_window();
         // Open filling the screen (owner preference). Done after the first frame: on macOS a
         // borderless window created with `with_maximized(true)` never became visible.
         if !self.startup_maximized {
             self.startup_maximized = true;
             ctx.send_viewport_cmd(egui::ViewportCommand::Maximized(true));
+        }
+        #[cfg(target_os = "windows")]
+        if self.capture_affinity_applied != Some(self.settings.protect_window_capture) {
+            match capture_guard::apply(self.settings.protect_window_capture) {
+                Ok(true) => {
+                    self.capture_affinity_applied = Some(self.settings.protect_window_capture);
+                }
+                Ok(false) => {}
+                Err(_) => {
+                    self.settings.protect_window_capture = false;
+                    self.capture_affinity_applied = Some(false);
+                    self.settings.save();
+                    self.show_toast("Windows không bật được hạn chế chụp cửa sổ này");
+                }
+            }
         }
         // Window close (Cmd+W, taskbar, OS) keeps the app running in the background unless a
         // real quit was requested (updater restart sets `allow_quit`).

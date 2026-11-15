@@ -1165,6 +1165,16 @@ fn build_fonts(ctx: &egui::Context, with_cjk: bool) {
         }
     }
 
+    // Windows chat names often contain symbol characters absent from Vietnamese UI fonts.
+    // Segoe UI Symbol is much smaller than the color emoji font and loads only on Windows.
+    #[cfg(target_os = "windows")]
+    if let Ok(font_data) = std::fs::read("C:\\Windows\\Fonts\\seguisym.ttf") {
+        fonts.font_data.insert(
+            "windows_symbols".to_owned(),
+            egui::FontData::from_owned(font_data),
+        );
+    }
+
     // 3. Optional CJK (Chinese / Japanese / Korean) system font fallback (#5, #6)
     let cjk_candidates = [
         "C:\\Windows\\Fonts\\msyh.ttc",
@@ -1199,6 +1209,9 @@ fn build_fonts(ctx: &egui::Context, with_cjk: bool) {
     if fonts.font_data.contains_key("cjk_font") {
         prop.push("cjk_font".to_owned());
     }
+    if fonts.font_data.contains_key("windows_symbols") {
+        prop.push("windows_symbols".to_owned());
+    }
     prop.push("lucide_font".to_owned());
 
     let mono = fonts
@@ -1211,6 +1224,9 @@ fn build_fonts(ctx: &egui::Context, with_cjk: bool) {
     }
     if fonts.font_data.contains_key("cjk_font") {
         mono.push("cjk_font".to_owned());
+    }
+    if fonts.font_data.contains_key("windows_symbols") {
+        mono.push("windows_symbols".to_owned());
     }
     mono.push("lucide_font".to_owned());
 

@@ -2,7 +2,7 @@
 
 Nhánh này phát triển từ [ctdozlite-next của Minh Khang](https://github.com/minhkhang1008/ctdozlite-next), vốn dựa trên [ctdozlite của ctdoteam1110](https://github.com/ctdoteam1110/ctdozlite). Mục tiêu là ưu tiên Windows và dùng chung một lõi Rust nhỏ với giao diện Android riêng. Đây là dự án cộng đồng, không phải ứng dụng chính thức của Zalo hoặc zBusiness.
 
-**Trạng thái ngày 14/11/2026:** bản Windows v0.3.2 đã build và qua kiểm thử tự động nhưng chưa đủ điều kiện dùng tài khoản thật hay phân phối. Hai APK Android debug đã build và chạy trên giả lập; hiện chỉ có thư viện GIF và mẫu tin cục bộ, chưa đăng nhập hoặc gửi tin Zalo.
+**Trạng thái ngày 15/11/2026:** bản Windows v0.3.2 đang được sửa giao diện theo ảnh Zalo PC và kiểm thử lại lỗi mở trùng, chọn thư mục và lưu phiên; chưa đủ điều kiện dùng tài khoản thật hay phân phối. Hai APK Android debug đã build và chạy trên giả lập; hiện chỉ có thư viện GIF và mẫu tin cục bộ, chưa đăng nhập hoặc gửi tin Zalo.
 
 | Cải tiến ở nhánh này | Trạng thái |
 | --- | --- |
@@ -10,6 +10,7 @@ Nhánh này phát triển từ [ctdozlite-next của Minh Khang](https://github.
 | GIF cá nhân: nhập tệp, khử trùng, xem trước, chọn/xóa trên Windows; nhập/xem trước trên Android | Đã chạy cục bộ; chưa chứng minh gửi GIF qua Zalo hoạt động |
 | Mẫu tin nhanh, nhãn hội thoại, nhắc việc | Fork v0.3.2 có mẫu tin; nhánh này thêm nhóm, tìm kiếm trong trình quản lý và biến cục bộ; Android có 100 mẫu tạo/sửa/tìm/xóa |
 | Hai APK với định danh và kênh GitHub khác nhau | Đã build/cài trên giả lập; chưa có APK tương thích từ fork và repo nội bộ chưa phát hành |
+| Giao diện Windows: ô nhập nhiều dòng, thanh công cụ phía trên, tab Chưa đọc, menu công cụ và menu cài đặt ở thanh trái | Đã code, đang kiểm thử bản chạy mới; những mục cục bộ không đại diện cho quyền zBusiness |
 
 Xem [bảng quyền zBusiness và phạm vi thực tế](docs/ZBUSINESS_MATRIX_2026-11-14.md), [bằng chứng kiểm thử](docs/verification/2026-11-14-latest-validation.md), [Android](android/README.md) và [ghi chú bảo mật Windows](docs/verification/2026-11-14-windows-audit.md). Không có tính năng nào ở đây mở khóa quyền Premium, hạn mức tài khoản hay Catalog chính thức.
 
