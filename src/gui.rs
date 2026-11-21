@@ -1852,6 +1852,10 @@ impl ZaloGuiApp {
                     self.user_avatar = avatar;
                     self.threads = threads;
                     self.selected_thread_index = 0;
+                    self.productivity = Default::default();
+                    self.input_message.clear();
+                    self.pending_drop_files.clear();
+                    self.composer_mentions.clear();
                     self.status_msg = format!("Đã chuyển sang tài khoản {name}");
                     self.show_toast(format!("Đã chuyển sang tài khoản {name}"));
                     self.history_reached_start.clear();

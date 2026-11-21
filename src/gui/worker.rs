@@ -243,6 +243,11 @@ pub enum WorkerCmd {
         account: String,
         request_id: u64,
     },
+    CatalogImageSelected {
+        account: String,
+        request_id: u64,
+        source: std::path::PathBuf,
+    },
     PreviewCatalogImage {
         account: String,
         path: String,
@@ -3601,23 +3606,43 @@ pub(super) fn spawn_session_worker(session: Session, gui_tx: GuiTx, egui_ctx: eg
                                 egui_ctx.request_repaint();
                                 continue;
                             }
-                            let root = std::env::current_dir().ok();
                             let tx = gui_tx.clone();
                             let ctx = egui_ctx.clone();
                             tokio::spawn(async move {
-                                let result = tokio::task::spawn_blocking(move || -> Result<Option<(String, egui::ColorImage)>, String> {
-                                    let root = root.ok_or_else(|| "Không xác định được thư mục dữ liệu".to_owned())?;
-                                    let Some(source) = pick_native_file_dialog(true) else { return Ok(None); };
-                                    let db = root.join("zalo_history.db");
-                                    let store = crate::store::MessageStore::open(db.to_str().ok_or_else(|| "Đường dẫn dữ liệu không hợp lệ".to_owned())?).map_err(|_| "Không mở được danh mục cục bộ".to_owned())?;
-                                    let relative = crate::business_catalog::import_image(&store.conn, &root, &source).map_err(|error| error.to_string())?;
-                                    let preview = crate::business_catalog::preview_image(&root, &relative).map_err(|error| error.to_string())?;
-                                    let color = egui::ColorImage::from_rgba_unmultiplied([preview.width() as usize, preview.height() as usize], preview.as_raw());
-                                    Ok(Some((relative, color)))
-                                }).await.unwrap_or_else(|_| Err("Không thể nhập ảnh sản phẩm".into()));
-                                let _ = tx.send(GuiEvent::CatalogImagePicked { account, request_id, result });
+                                match tokio::task::spawn_blocking(|| pick_native_file_dialog(true)).await {
+                                    Ok(Some(source)) => {
+                                        if WORKER_TX.get().is_some_and(|worker| worker.send(WorkerCmd::CatalogImageSelected { account: account.clone(), request_id, source }).is_ok()) {
+                                            return;
+                                        }
+                                        let _ = tx.send(GuiEvent::CatalogImagePicked { account, request_id, result: Err("Không thể nhập ảnh sản phẩm".into()) });
+                                    }
+                                    Ok(None) => { let _ = tx.send(GuiEvent::CatalogImagePicked { account, request_id, result: Ok(None) }); }
+                                    Err(_) => { let _ = tx.send(GuiEvent::CatalogImagePicked { account, request_id, result: Err("Không mở được bộ chọn ảnh".into()) }); }
+                                }
                                 ctx.request_repaint();
                             });
+                        }
+                        WorkerCmd::CatalogImageSelected { account, request_id, source } => {
+                            let session_guard = session.lock().await;
+                            let active = session_guard.login.as_ref().map(|login| login.uin.as_str()).unwrap_or_default();
+                            if active != account || active.is_empty() {
+                                let _ = gui_tx.send(GuiEvent::CatalogImagePicked { account, request_id, result: Err("Tài khoản đã thay đổi. Hãy chọn lại ảnh.".into()) });
+                                egui_ctx.request_repaint();
+                                continue;
+                            }
+                            let root = std::env::current_dir().ok();
+                            let result = tokio::task::spawn_blocking(move || -> Result<Option<(String, egui::ColorImage)>, String> {
+                                let root = root.ok_or_else(|| "Không xác định được thư mục dữ liệu".to_owned())?;
+                                let db = root.join("zalo_history.db");
+                                let store = crate::store::MessageStore::open(db.to_str().ok_or_else(|| "Đường dẫn dữ liệu không hợp lệ".to_owned())?).map_err(|_| "Không mở được danh mục cục bộ".to_owned())?;
+                                let relative = crate::business_catalog::import_image(&store.conn, &root, &source).map_err(|error| error.to_string())?;
+                                let preview = crate::business_catalog::preview_image(&root, &relative).map_err(|error| error.to_string())?;
+                                let color = egui::ColorImage::from_rgba_unmultiplied([preview.width() as usize, preview.height() as usize], preview.as_raw());
+                                Ok(Some((relative, color)))
+                            }).await.unwrap_or_else(|_| Err("Không thể nhập ảnh sản phẩm".into()));
+                            drop(session_guard);
+                            let _ = gui_tx.send(GuiEvent::CatalogImagePicked { account, request_id, result });
+                            egui_ctx.request_repaint();
                         }
                         WorkerCmd::PreviewCatalogImage { account, path } => {
                             let active = session.lock().await.login.as_ref().map(|login| login.uin.clone()).unwrap_or_default();
