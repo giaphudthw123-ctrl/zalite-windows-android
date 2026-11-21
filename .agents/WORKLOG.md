@@ -981,3 +981,10 @@ Entry template:
 - Changes: moved the toolbar above a full-width multiline editor, added local tools and bottom settings menus, unread tab, group-title sizing, symbol-font fallback and missing-photo card; added a Windows named mutex and native HWND restore, a directory picker, a QR-save error path, and a capture-affinity setting. See `docs/verification/2026-11-15-windows-ui-followup.md`.
 - Verification: final source passed `cargo check --locked --offline --bin ctdozlite`, release build, formatting/diff checks and all 364 active library tests (2 ignored) using a synthetic loopback fixture; a same-shell second GUI process exited immediately; the capture setting returned Windows affinity `0x11`. A separate 30-second no-account run measured 113.41 MiB peak working set, 52.46 MiB peak private memory, 1.04% mean one-core CPU, 78.91 MiB EXE and 60 KiB profile files. Final restore and authenticated chat UI are NOT visually verified: the user stopped Computer Use with Esc during the retest. Network bytes were not measured.
 - Status: partial. No real account login or message send, no installer/APK publication. Source and build remain local pending review and the interrupted UI retest.
+
+## 2026-11-21 — Empty-profile Windows reopen retest (agent: Codex, GPT-6)
+- Request: Continue the Windows-first Zalo client and verify the last hidden-window fix.
+- Context / root cause: the prior visual retest ended before the native HWND change could be observed. The local release executable had already passed build and library tests.
+- Changes: updated the verification record after testing the same release executable; no product code changed.
+- Verification: launched the release GUI from a new empty test profile, clicked X through Computer Use, confirmed the window became unusable/hidden, launched a second instance with the same profile, observed exit code 0 and the original login window visibly reappear. No QR scan, session file, or message was used.
+- Status: X → reopen passed without an account. Tray menu, real-session persistence, authenticated chat UI, and per-process network measurement remain open.
