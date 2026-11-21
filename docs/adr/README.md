@@ -35,6 +35,9 @@ What we will do, in one paragraph, present tense.
 
 | ADR | Title | Status |
 | :--- | :--- | :--- |
-| — | No decisions recorded yet | — |
+| 0001 | History sync | Existing |
+| 0002 | Self updater | Accepted |
+| 0003 | Changelog policy | Existing |
+| [0004](0004-local-product-catalog.md) | Account-local product catalog | Accepted for Windows prototype |
 
 Related domain language lives in [`/GLOSSARY.md`](../../GLOSSARY.md).

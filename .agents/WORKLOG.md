@@ -988,3 +988,10 @@ Entry template:
 - Changes: updated the verification record after testing the same release executable; no product code changed.
 - Verification: launched the release GUI from a new empty test profile, clicked X through Computer Use, confirmed the window became unusable/hidden, launched a second instance with the same profile, observed exit code 0 and the original login window visibly reappear. No QR scan, session file, or message was used.
 - Status: X → reopen passed without an account. Tray menu, real-session persistence, authenticated chat UI, and per-process network measurement remain open.
+
+## 2026-11-21 — Local product catalog checkpoint (agent: Codex, GPT-6)
+- Request: Continue implementing working local business tools on the Windows Rust client.
+- Context / root cause: the business menu exposed quick messages, GIFs, stars and reminders but had no product catalog; existing account-local SQLite and productivity worker provided the right ownership boundary.
+- Changes: added migration 3 and a local products table; added bounded CRUD/search, SKU validation, a private stock note and plain-text composer card; connected the business menu to an editor/list and confirmed delete. See `docs/adr/0004-local-product-catalog.md` and `docs/verification/2026-11-21-local-catalog.md`.
+- Verification: final source passed 6 catalog tests and the full library suite (370 passed, 2 ignored) with the synthetic loopback fixture allowed; formatting/diff checks and final release build passed. The preceding catalog build opened an empty-profile login screen. The final guard build was not visually observed because the user stopped Computer Use with Esc. Thirty-second steady no-login sample on the preceding build: 116.36 MiB peak working set, 52.06 MiB peak private, 2.58% one-core CPU, 79.11 MiB EXE and 76 KiB profile; final EXE is 79.10 MiB. No network-byte measurement or authenticated catalog UI/send test.
+- Status: partial. Product images, encrypted local storage/backup, final-build UI verification and Android catalog remain open. No real account or message send was used.

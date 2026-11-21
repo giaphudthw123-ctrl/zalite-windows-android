@@ -5706,7 +5706,7 @@ impl ZaloGuiApp {
         }
 
         let mut selected = None;
-        let popup_y = (ctx.screen_rect().height() - 308.0).max(48.0);
+        let popup_y = (ctx.screen_rect().height() - 385.0).max(48.0);
         let response = egui::Area::new(Id::new("local_business_tools"))
             .order(egui::Order::Foreground)
             .fixed_pos(Pos2::new(68.0, popup_y))
@@ -5777,6 +5777,11 @@ impl ZaloGuiApp {
                                 selected = Some(3);
                             }
                         });
+                        ui.add_space(7.0);
+                        if business_tool_tile(ui, pal, lucide::STORE, "Sản phẩm", "Danh mục cục bộ")
+                        {
+                            selected = Some(4);
+                        }
                     });
             });
 
@@ -5803,6 +5808,10 @@ impl ZaloGuiApp {
                     self.filter_starred_only = !self.filter_starred_only;
                 }
                 3 => self.schedule_modal_open = true,
+                4 => {
+                    self.productivity.tab = 3;
+                    self.productivity.open = true;
+                }
                 _ => {}
             }
         } else if ctx.input(|input| input.pointer.any_click())

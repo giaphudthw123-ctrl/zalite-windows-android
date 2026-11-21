@@ -23,6 +23,12 @@ pub(super) struct State {
     pending: HashMap<String, Draft>,
     note_edits: HashMap<String, String>,
     fired: Vec<crate::productivity::Reminder>,
+    catalog_loaded: bool,
+    catalog_query: String,
+    catalog_items: Vec<crate::business_catalog::Product>,
+    catalog_form: crate::business_catalog::Product,
+    catalog_delete_id: Option<String>,
+    catalog_mutation_pending: bool,
 }
 impl ZaloGuiApp {
     pub(super) fn local_action(&self, action: Action) -> bool {
@@ -233,9 +239,21 @@ impl ZaloGuiApp {
                 self.productivity.tab = 1;
                 self.local_action(Action::Load);
             }
+            Ok(Update::Catalog { products, modified }) => {
+                self.productivity.catalog_items = products;
+                self.productivity.catalog_loaded = true;
+                if modified && self.productivity.catalog_mutation_pending {
+                    self.productivity.catalog_form = Default::default();
+                    self.productivity.catalog_query.clear();
+                    self.productivity.catalog_delete_id = None;
+                    self.productivity.catalog_mutation_pending = false;
+                    self.productivity.status = "Đã lưu danh mục trên máy.".into();
+                }
+            }
             Ok(Update::QuitReady) => std::process::exit(0),
             Err(error) => {
                 self.productivity.quitting = false;
+                self.productivity.catalog_mutation_pending = false;
                 self.productivity.status = error.clone();
                 self.show_toast(error);
             }
@@ -265,13 +283,121 @@ impl ZaloGuiApp {
         });
         self.productivity.open = false;
     }
+    fn render_catalog_tab(&mut self, ui: &mut egui::Ui) {
+        use crate::business_catalog::{composer_card, Product};
+        ui.label("Danh mục riêng trên máy. Đây không phải Catalog zBusiness hiển thị trong Zalo.");
+        if !self.productivity.catalog_loaded {
+            self.productivity.catalog_loaded =
+                self.local_action(Action::CatalogList(String::new()));
+        }
+        ui.horizontal(|ui| {
+            ui.label("Tìm sản phẩm:");
+            ui.text_edit_singleline(&mut self.productivity.catalog_query);
+            if ui.button("Tìm").clicked() {
+                self.local_action(Action::CatalogList(self.productivity.catalog_query.clone()));
+            }
+            if ui.button("Hiện mới nhất").clicked() {
+                self.productivity.catalog_query.clear();
+                self.local_action(Action::CatalogList(String::new()));
+            }
+        });
+        ui.label("Hiển thị tối đa 200 kết quả; nhập mã hoặc tên để tìm thêm.");
+        ui.separator();
+        ui.group(|ui| {
+            ui.label(if self.productivity.catalog_form.id.is_empty() {
+                "Thêm sản phẩm"
+            } else {
+                "Sửa sản phẩm"
+            });
+            ui.horizontal(|ui| {
+                ui.label("Tên");
+                ui.text_edit_singleline(&mut self.productivity.catalog_form.name);
+                ui.label("Mã SKU");
+                ui.text_edit_singleline(&mut self.productivity.catalog_form.sku);
+            });
+            ui.horizontal(|ui| {
+                ui.label("Giá (đ)");
+                ui.add(
+                    egui::DragValue::new(&mut self.productivity.catalog_form.price_vnd)
+                        .range(0..=i64::MAX)
+                        .speed(1_000.0),
+                );
+                ui.label("Biến thể");
+                ui.text_edit_singleline(&mut self.productivity.catalog_form.variants);
+            });
+            ui.label("Mô tả gửi kèm thẻ sản phẩm");
+            ui.text_edit_multiline(&mut self.productivity.catalog_form.description);
+            ui.label("Ghi chú tồn kho (chỉ lưu trên máy)");
+            ui.text_edit_singleline(&mut self.productivity.catalog_form.stock_note);
+            ui.horizontal(|ui| {
+                if ui.button("Lưu sản phẩm").clicked()
+                    && !self.productivity.catalog_mutation_pending
+                {
+                    let product = self.productivity.catalog_form.clone();
+                    self.productivity.catalog_mutation_pending =
+                        self.local_action(Action::CatalogSave(product));
+                }
+                if ui.button("Tạo sản phẩm khác").clicked() {
+                    self.productivity.catalog_form = Product::default();
+                }
+            });
+        });
+        ui.separator();
+        for product in self.productivity.catalog_items.clone() {
+            ui.group(|ui| {
+                ui.horizontal(|ui| {
+                    ui.strong(&product.name);
+                    if !product.sku.is_empty() {
+                        ui.label(format!("· {}", product.sku));
+                    }
+                    ui.label(format!("· {} đ", product.price_vnd));
+                });
+                ui.horizontal(|ui| {
+                    if ui.button("Sửa").clicked() {
+                        self.productivity.catalog_form = product.clone();
+                    }
+                    if ui.button("Chèn vào ô soạn").clicked() {
+                        if self.threads.get(self.selected_thread_index).is_some() {
+                            if !self.input_message.is_empty() {
+                                self.input_message.push_str("\n\n");
+                            }
+                            self.input_message.push_str(&composer_card(&product));
+                            self.productivity.open = false;
+                            self.show_toast(
+                                "Đã chèn thẻ sản phẩm. Kiểm tra người nhận trước khi gửi.",
+                            );
+                        } else {
+                            self.show_toast("Hãy chọn hội thoại trước khi chèn sản phẩm.");
+                        }
+                    }
+                    if ui.button("Xóa...").clicked() {
+                        self.productivity.catalog_delete_id = Some(product.id.clone());
+                    }
+                });
+                if self.productivity.catalog_delete_id.as_deref() == Some(product.id.as_str()) {
+                    ui.horizontal(|ui| {
+                        ui.label("Xóa sản phẩm này khỏi máy?");
+                        if ui.button("Xác nhận xóa").clicked()
+                            && !self.productivity.catalog_mutation_pending
+                        {
+                            self.productivity.catalog_mutation_pending =
+                                self.local_action(Action::CatalogDelete(product.id.clone()));
+                        }
+                        if ui.button("Hủy").clicked() {
+                            self.productivity.catalog_delete_id = None;
+                        }
+                    });
+                }
+            });
+        }
+    }
     pub(super) fn render_local_window(&mut self, ctx: &egui::Context) {
         if !self.productivity.open {
             return;
         }
         let mut open = true;
         egui::Window::new("Tin nhắn của bạn").open(&mut open).default_width(600.0).show(ctx, |ui| {
-            ui.horizontal_wrapped(|ui| { for (tab,label) in [(0,"Đã lưu"),(1,"Nhắc hẹn"),(2,"Tìm nâng cao")] { ui.selectable_value(&mut self.productivity.tab,tab,label); } });
+            ui.horizontal_wrapped(|ui| { for (tab,label) in [(0,"Đã lưu"),(1,"Nhắc hẹn"),(2,"Tìm nâng cao"),(3,"Sản phẩm của tôi")] { ui.selectable_value(&mut self.productivity.tab,tab,label); } });
             ui.label(&self.productivity.status);
             egui::ScrollArea::vertical().max_height(500.0).show(ui,|ui| match self.productivity.tab {
                 0 => {
@@ -308,6 +434,7 @@ impl ZaloGuiApp {
                         ui.horizontal(|ui| { if ui.button("Đến hội thoại").clicked() { self.jump_local(&item.thread_id,&item.msg_id); } if ui.button("Hủy nhắc").clicked() { self.productivity.fired.retain(|r|r.id!=item.id); self.local_action(Action::RemoveReminder(item.id)); } });
                     }); }
                 }
+                3 => self.render_catalog_tab(ui),
                 _ => {
                     ui.label("from:tên hoặc ID · in:hội thoại · has:image/file/voice/link · before:YYYY-MM-DD · after:YYYY-MM-DD · is:saved · is:pinned · #tag · \"cụm từ\"");
                     ui.label("Tối đa 200 kết quả mới nhất; thêm bộ lọc để thu hẹp.");

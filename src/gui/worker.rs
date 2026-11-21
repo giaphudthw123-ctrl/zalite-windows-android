@@ -4222,12 +4222,21 @@ pub(super) fn spawn_session_worker(session: Session, gui_tx: GuiTx, egui_ctx: eg
                                 egui_ctx.request_repaint();continue;
                             }
                             if matches!(&action,crate::productivity::Action::Quit(_)){if let Some((_,control,cancelled))=voice_control.take(){cancelled.store(true,std::sync::atomic::Ordering::Relaxed);let _=control.send(true);}}
+                            let catalog_action = matches!(&action, crate::productivity::Action::CatalogSave(_) | crate::productivity::Action::CatalogDelete(_) | crate::productivity::Action::CatalogList(_));
 
                             let update = tokio::task::spawn_blocking(move || -> anyhow::Result<crate::productivity::Update> {
                                 let store = crate::store::MessageStore::open("zalo_history.db")?;
                                 crate::productivity::execute(store, action, crate::login::unix_now() as i64)
                             }).await;
-                            let result = match update { Ok(Ok(result)) => Ok(result), _ => Err("Không thể cập nhật dữ liệu cá nhân trên máy. Hãy thử lại.".to_owned()) };
+                            let result = match update {
+                                Ok(Ok(result)) => Ok(result),
+                                Ok(Err(error)) if catalog_action => {
+                                    let message = error.to_string();
+                                    let is_validation = ["Nhập tên sản phẩm", "Giá không được âm", "Mã SKU này đã tồn tại", "Mã sản phẩm nội bộ không hợp lệ", "Từ khóa tìm kiếm quá dài", "Mã sản phẩm quá dài", "Tên sản phẩm quá dài", "Mô tả quá dài", "Biến thể quá dài", "Ghi chú tồn kho quá dài", "Mã sản phẩm chứa ký tự điều khiển", "Tên sản phẩm chứa ký tự điều khiển", "Mô tả chứa ký tự điều khiển", "Biến thể chứa ký tự điều khiển", "Ghi chú tồn kho chứa ký tự điều khiển"].contains(&message.as_str());
+                                    Err(if is_validation { message } else { "Không thể cập nhật danh mục trên máy. Hãy thử lại.".to_owned() })
+                                }
+                                _ => Err("Không thể cập nhật dữ liệu cá nhân trên máy. Hãy thử lại.".to_owned()),
+                            };
                             let _ = gui_tx.send(GuiEvent::Productivity { account, update:result });
                             egui_ctx.request_repaint();
                         }

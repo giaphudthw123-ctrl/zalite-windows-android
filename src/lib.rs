@@ -59,6 +59,7 @@ mod clipboard_dib;
 
 pub(crate) mod sync_runtime;
 
+pub mod business_catalog;
 pub mod productivity;
 
 pub mod doc_preview;

@@ -9,6 +9,7 @@ Nhánh này phát triển từ [ctdozlite-next của Minh Khang](https://github.
 | Windows: dữ liệu mặc định trong AppData, giới hạn nơi gửi phiên, cập nhật thủ công có kiểm tra URL/SHA-256 và không tự chạy bộ cài | Đã code và kiểm thử một phần; phiên/chat trên Windows chưa được mã hóa khi lưu |
 | GIF cá nhân: nhập tệp, khử trùng, xem trước, chọn/xóa trên Windows; nhập/xem trước trên Android | Đã chạy cục bộ; chưa chứng minh gửi GIF qua Zalo hoạt động |
 | Mẫu tin nhanh, nhãn hội thoại, nhắc việc | Fork v0.3.2 có mẫu tin; nhánh này thêm nhóm, tìm kiếm trong trình quản lý và biến cục bộ; Android có 100 mẫu tạo/sửa/tìm/xóa |
+| Danh mục sản phẩm cục bộ trên Windows | Thêm/sửa/tìm/xóa có xác nhận, giá/biến thể/ghi chú riêng và chèn thẻ văn bản vào ô soạn; chưa có ảnh hoặc kiểm thử UI sau đăng nhập |
 | Hai APK với định danh và kênh GitHub khác nhau | Đã build/cài trên giả lập; chưa có APK tương thích từ fork và repo nội bộ chưa phát hành |
 | Giao diện Windows: ô nhập nhiều dòng, thanh công cụ phía trên, tab Chưa đọc, menu công cụ và menu cài đặt ở thanh trái | Đã code, đang kiểm thử bản chạy mới; những mục cục bộ không đại diện cho quyền zBusiness |
 

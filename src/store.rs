@@ -74,6 +74,12 @@ impl MessageStore {
             Connection::open(path)?
         };
 
+        let schema_version: i64 = conn.query_row("PRAGMA user_version", [], |row| row.get(0))?;
+        anyhow::ensure!(
+            schema_version <= 3,
+            "Dữ liệu được tạo bởi phiên bản ứng dụng mới hơn"
+        );
+
         conn.execute_batch(
             "CREATE TABLE IF NOT EXISTS messages (
                 msg_id TEXT PRIMARY KEY,
@@ -121,6 +127,7 @@ impl MessageStore {
         }
 
         crate::productivity::init_schema(&conn)?;
+        crate::business_catalog::init_schema(&conn)?;
         if path != ":memory:" {
             enforce_sqlite_file_permissions(std::path::Path::new(path))?;
         }

@@ -452,6 +452,9 @@ pub enum Action {
         preview: String,
     },
     RemoveReminder(i64),
+    CatalogList(String),
+    CatalogSave(crate::business_catalog::Product),
+    CatalogDelete(String),
     Tick,
     Quit(Draft),
 }
@@ -468,6 +471,10 @@ pub enum Update {
         messages: Vec<StoredMessage>,
     },
     Due(Vec<Reminder>),
+    Catalog {
+        products: Vec<crate::business_catalog::Product>,
+        modified: bool,
+    },
     Ack,
     QuitReady,
 }
@@ -500,6 +507,26 @@ pub fn execute(mut store: crate::store::MessageStore, action: Action, now: i64) 
         } => add_reminder(c, &thread, &msg, due, &preview, now)?,
         Action::RemoveReminder(id) => {
             c.execute("DELETE FROM message_reminders WHERE id=?1", [id])?;
+        }
+        Action::CatalogList(query) => {
+            return Ok(Update::Catalog {
+                products: crate::business_catalog::list(c, &query)?,
+                modified: false,
+            });
+        }
+        Action::CatalogSave(product) => {
+            crate::business_catalog::save(c, product, now.saturating_mul(1000))?;
+            return Ok(Update::Catalog {
+                products: crate::business_catalog::list(c, "")?,
+                modified: true,
+            });
+        }
+        Action::CatalogDelete(id) => {
+            crate::business_catalog::delete(c, &id)?;
+            return Ok(Update::Catalog {
+                products: crate::business_catalog::list(c, "")?,
+                modified: true,
+            });
         }
         Action::Tick => return Ok(Update::Due(claim_due(c, now)?)),
     }
