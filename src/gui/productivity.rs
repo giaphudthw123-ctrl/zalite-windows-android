@@ -29,6 +29,9 @@ pub(super) struct State {
     catalog_form: crate::business_catalog::Product,
     catalog_delete_id: Option<String>,
     catalog_mutation_pending: bool,
+    catalog_image_request_id: u64,
+    catalog_image_loading: bool,
+    catalog_preview: Option<(String, TextureHandle)>,
 }
 impl ZaloGuiApp {
     pub(super) fn local_action(&self, action: Action) -> bool {
@@ -244,6 +247,10 @@ impl ZaloGuiApp {
                 self.productivity.catalog_loaded = true;
                 if modified && self.productivity.catalog_mutation_pending {
                     self.productivity.catalog_form = Default::default();
+                    self.productivity.catalog_preview = None;
+                    self.productivity.catalog_image_request_id =
+                        self.productivity.catalog_image_request_id.wrapping_add(1);
+                    self.productivity.catalog_image_loading = false;
                     self.productivity.catalog_query.clear();
                     self.productivity.catalog_delete_id = None;
                     self.productivity.catalog_mutation_pending = false;
@@ -282,6 +289,64 @@ impl ZaloGuiApp {
             msg: msg.to_owned(),
         });
         self.productivity.open = false;
+    }
+    pub(super) fn local_image_picked(
+        &mut self,
+        ctx: &egui::Context,
+        account: String,
+        request_id: u64,
+        result: Result<Option<(String, egui::ColorImage)>, String>,
+    ) {
+        if account != self.user_uin || request_id != self.productivity.catalog_image_request_id {
+            return;
+        }
+        self.productivity.catalog_image_loading = false;
+        match result {
+            Ok(Some((path, image))) => {
+                let texture = ctx.load_texture(
+                    format!("catalog-{request_id}"),
+                    image,
+                    TextureOptions::LINEAR,
+                );
+                self.productivity.catalog_form.image_path = path.clone();
+                self.productivity.catalog_preview = Some((path, texture));
+            }
+            Ok(None) => {}
+            Err(error) => {
+                self.productivity.status = error.clone();
+                self.show_toast(error);
+            }
+        }
+    }
+    pub(super) fn local_image_preview(
+        &mut self,
+        ctx: &egui::Context,
+        account: String,
+        path: String,
+        result: Result<egui::ColorImage, String>,
+    ) {
+        if account != self.user_uin || self.productivity.catalog_form.image_path != path {
+            return;
+        }
+        match result {
+            Ok(image) => {
+                let texture = ctx.load_texture(
+                    format!("catalog-preview-{path}"),
+                    image,
+                    TextureOptions::LINEAR,
+                );
+                self.productivity.catalog_preview = Some((path, texture));
+            }
+            Err(error) => self.productivity.status = error,
+        }
+    }
+    fn request_catalog_preview(&self, path: &str) {
+        if let Some(tx) = WORKER_TX.get() {
+            let _ = tx.send(WorkerCmd::PreviewCatalogImage {
+                account: self.user_uin.clone(),
+                path: path.to_owned(),
+            });
+        }
     }
     fn render_catalog_tab(&mut self, ui: &mut egui::Ui) {
         use crate::business_catalog::{composer_card, Product};
@@ -330,6 +395,42 @@ impl ZaloGuiApp {
             ui.label("Ghi chú tồn kho (chỉ lưu trên máy)");
             ui.text_edit_singleline(&mut self.productivity.catalog_form.stock_note);
             ui.horizontal(|ui| {
+                if ui.button("Chọn ảnh PNG/JPEG/GIF...").clicked()
+                    && !self.productivity.catalog_image_loading
+                {
+                    self.productivity.catalog_image_request_id =
+                        self.productivity.catalog_image_request_id.wrapping_add(1);
+                    let request_id = self.productivity.catalog_image_request_id;
+                    self.productivity.catalog_image_loading = WORKER_TX.get().is_some_and(|tx| {
+                        tx.send(WorkerCmd::PickCatalogImage {
+                            account: self.user_uin.clone(),
+                            request_id,
+                        })
+                        .is_ok()
+                    });
+                    if !self.productivity.catalog_image_loading {
+                        self.productivity.status = "Không mở được bộ chọn ảnh".into();
+                    }
+                }
+                if self.productivity.catalog_image_loading {
+                    ui.spinner();
+                }
+                if !self.productivity.catalog_form.image_path.is_empty()
+                    && ui.button("Bỏ ảnh").clicked()
+                {
+                    self.productivity.catalog_form.image_path.clear();
+                    self.productivity.catalog_preview = None;
+                    self.productivity.catalog_image_request_id =
+                        self.productivity.catalog_image_request_id.wrapping_add(1);
+                    self.productivity.catalog_image_loading = false;
+                }
+            });
+            if let Some((path, texture)) = &self.productivity.catalog_preview {
+                if path == &self.productivity.catalog_form.image_path {
+                    ui.image((texture.id(), texture.size_vec2()));
+                }
+            }
+            ui.horizontal(|ui| {
                 if ui.button("Lưu sản phẩm").clicked()
                     && !self.productivity.catalog_mutation_pending
                 {
@@ -339,6 +440,10 @@ impl ZaloGuiApp {
                 }
                 if ui.button("Tạo sản phẩm khác").clicked() {
                     self.productivity.catalog_form = Product::default();
+                    self.productivity.catalog_preview = None;
+                    self.productivity.catalog_image_request_id =
+                        self.productivity.catalog_image_request_id.wrapping_add(1);
+                    self.productivity.catalog_image_loading = false;
                 }
             });
         });
@@ -355,6 +460,13 @@ impl ZaloGuiApp {
                 ui.horizontal(|ui| {
                     if ui.button("Sửa").clicked() {
                         self.productivity.catalog_form = product.clone();
+                        self.productivity.catalog_preview = None;
+                        self.productivity.catalog_image_request_id =
+                            self.productivity.catalog_image_request_id.wrapping_add(1);
+                        self.productivity.catalog_image_loading = false;
+                        if !product.image_path.is_empty() {
+                            self.request_catalog_preview(&product.image_path);
+                        }
                     }
                     if ui.button("Chèn vào ô soạn").clicked() {
                         if self.threads.get(self.selected_thread_index).is_some() {
@@ -362,6 +474,23 @@ impl ZaloGuiApp {
                                 self.input_message.push_str("\n\n");
                             }
                             self.input_message.push_str(&composer_card(&product));
+                            if !product.image_path.is_empty() {
+                                match crate::business_catalog::managed_image_path(
+                                    std::path::Path::new("."),
+                                    &product.image_path,
+                                ) {
+                                    Ok(path) => {
+                                        if !self.queue_pending_composer_file(ui.ctx(), path) {
+                                            self.show_toast(
+                                                "Không thêm được ảnh sản phẩm vào ô soạn.",
+                                            );
+                                        }
+                                    }
+                                    _ => {
+                                        self.show_toast("Không thêm được ảnh sản phẩm vào ô soạn.")
+                                    }
+                                }
+                            }
                             self.productivity.open = false;
                             self.show_toast(
                                 "Đã chèn thẻ sản phẩm. Kiểm tra người nhận trước khi gửi.",

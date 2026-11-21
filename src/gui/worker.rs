@@ -239,6 +239,14 @@ pub enum WorkerCmd {
     PickQuickMessageImage {
         request_id: u64,
     },
+    PickCatalogImage {
+        account: String,
+        request_id: u64,
+    },
+    PreviewCatalogImage {
+        account: String,
+        path: String,
+    },
     /// Remove an unreferenced image from the managed quick-message directory.
     DeleteQuickMessageImage {
         path: String,
@@ -3584,6 +3592,48 @@ pub(super) fn spawn_session_worker(session: Session, gui_tx: GuiTx, egui_ctx: eg
                                     request_id,
                                     result,
                                 });
+                            });
+                        }
+                        WorkerCmd::PickCatalogImage { account, request_id } => {
+                            let active = session.lock().await.login.as_ref().map(|login| login.uin.clone()).unwrap_or_default();
+                            if active != account || active.is_empty() {
+                                let _ = gui_tx.send(GuiEvent::CatalogImagePicked { account, request_id, result: Err("Tài khoản đã thay đổi.".into()) });
+                                egui_ctx.request_repaint();
+                                continue;
+                            }
+                            let root = std::env::current_dir().ok();
+                            let tx = gui_tx.clone();
+                            let ctx = egui_ctx.clone();
+                            tokio::spawn(async move {
+                                let result = tokio::task::spawn_blocking(move || -> Result<Option<(String, egui::ColorImage)>, String> {
+                                    let root = root.ok_or_else(|| "Không xác định được thư mục dữ liệu".to_owned())?;
+                                    let Some(source) = pick_native_file_dialog(true) else { return Ok(None); };
+                                    let db = root.join("zalo_history.db");
+                                    let store = crate::store::MessageStore::open(db.to_str().ok_or_else(|| "Đường dẫn dữ liệu không hợp lệ".to_owned())?).map_err(|_| "Không mở được danh mục cục bộ".to_owned())?;
+                                    let relative = crate::business_catalog::import_image(&store.conn, &root, &source).map_err(|error| error.to_string())?;
+                                    let preview = crate::business_catalog::preview_image(&root, &relative).map_err(|error| error.to_string())?;
+                                    let color = egui::ColorImage::from_rgba_unmultiplied([preview.width() as usize, preview.height() as usize], preview.as_raw());
+                                    Ok(Some((relative, color)))
+                                }).await.unwrap_or_else(|_| Err("Không thể nhập ảnh sản phẩm".into()));
+                                let _ = tx.send(GuiEvent::CatalogImagePicked { account, request_id, result });
+                                ctx.request_repaint();
+                            });
+                        }
+                        WorkerCmd::PreviewCatalogImage { account, path } => {
+                            let active = session.lock().await.login.as_ref().map(|login| login.uin.clone()).unwrap_or_default();
+                            if active != account || active.is_empty() { continue; }
+                            let root = std::env::current_dir().ok();
+                            let tx = gui_tx.clone();
+                            let ctx = egui_ctx.clone();
+                            tokio::spawn(async move {
+                                let relative = path.clone();
+                                let result = tokio::task::spawn_blocking(move || -> Result<egui::ColorImage, String> {
+                                    let root = root.ok_or_else(|| "Không xác định được thư mục dữ liệu".to_owned())?;
+                                    let preview = crate::business_catalog::preview_image(&root, &relative).map_err(|_| "Không thể xem trước ảnh sản phẩm".to_owned())?;
+                                    Ok(egui::ColorImage::from_rgba_unmultiplied([preview.width() as usize, preview.height() as usize], preview.as_raw()))
+                                }).await.unwrap_or_else(|_| Err("Không thể xem trước ảnh sản phẩm".into()));
+                                let _ = tx.send(GuiEvent::CatalogImagePreview { account, path, result });
+                                ctx.request_repaint();
                             });
                         }
                         WorkerCmd::DeleteQuickMessageImage { path } => {

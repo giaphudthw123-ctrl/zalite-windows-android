@@ -76,7 +76,7 @@ impl MessageStore {
 
         let schema_version: i64 = conn.query_row("PRAGMA user_version", [], |row| row.get(0))?;
         anyhow::ensure!(
-            schema_version <= 3,
+            schema_version <= 4,
             "Dữ liệu được tạo bởi phiên bản ứng dụng mới hơn"
         );
 

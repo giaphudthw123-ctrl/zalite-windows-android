@@ -152,6 +152,16 @@ pub enum GuiEvent {
         request_id: u64,
         result: Result<Option<String>, String>,
     },
+    CatalogImagePicked {
+        account: String,
+        request_id: u64,
+        result: Result<Option<(String, egui::ColorImage)>, String>,
+    },
+    CatalogImagePreview {
+        account: String,
+        path: String,
+        result: Result<egui::ColorImage, String>,
+    },
     QuickMessageImageDeleted {
         error: Option<String>,
     },
@@ -1474,6 +1484,20 @@ impl ZaloGuiApp {
                     }
                 }
                 GuiEvent::Productivity { account, update } => self.local_update(account, update),
+                GuiEvent::CatalogImagePicked {
+                    account,
+                    request_id,
+                    result,
+                } => {
+                    self.local_image_picked(ctx, account, request_id, result);
+                }
+                GuiEvent::CatalogImagePreview {
+                    account,
+                    path,
+                    result,
+                } => {
+                    self.local_image_preview(ctx, account, path, result);
+                }
                 GuiEvent::NotificationAuthorization { request_id, result } => {
                     self.notification_authorization.finish(request_id, result);
                 }
