@@ -1486,7 +1486,7 @@ pub fn truncate(s: &str, n: usize) -> String {
 
 /// Client-generated device id. Persisted only in memory for now — regenerate per run.
 fn random_imei() -> String {
-    crate::call::official_imei()
+    crate::protocol_identity::official_imei()
 }
 
 #[cfg(test)]

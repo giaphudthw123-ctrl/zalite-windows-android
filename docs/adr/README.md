@@ -43,5 +43,6 @@ What we will do, in one paragraph, present tense.
 | [0006](0006-consistent-account-snapshots.md) | Consistent account snapshots | Accepted for Windows prototype |
 | [0007](0007-account-switch-rollback.md) | Runtime account switch rollback | Accepted for Windows prototype |
 | [0008](0008-windows-session-protection.md) | Windows user-bound Session protection | Accepted for Windows prototype |
+| [0009](0009-portable-companion-auth.md) | Portable companion authentication sources | Accepted for prototype |
 
 Related domain language lives in [`/GLOSSARY.md`](../../GLOSSARY.md).

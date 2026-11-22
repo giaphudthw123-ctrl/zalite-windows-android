@@ -1876,20 +1876,7 @@ pub fn build_pure_rust_invite_fields(
 /// voicecall backend reacts to the shape: a 24-hex homegrown value gets a degraded invite
 /// (`params.status=5`, `extendData` stripped).
 pub fn official_imei() -> String {
-    let hex = crate::param_cipher::random_hex(32);
-    let variant = ['8', '9', 'a', 'b'][(hex.as_bytes()[16] as usize) % 4];
-    let uuid = format!(
-        "{}-{}-4{}-{}{}-{}",
-        &hex[0..8],
-        &hex[8..12],
-        &hex[13..16],
-        variant,
-        &hex[17..20],
-        &hex[20..32]
-    );
-    let ua = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) \
-              Zalo/26.10.11 Chrome/122.0.6261.95 Electron/29.1.5 Safari/537.36";
-    format!("{uuid}-{}", crate::crypto::md5_hex(ua))
+    crate::protocol_identity::official_imei()
 }
 
 /// `session` for a voice call: 115 random bytes rendered as 154 url-safe base64 chars, which is

@@ -24,6 +24,7 @@ pub mod message_navigation;
 pub mod param_cipher;
 /// Bounded, local personal GIF gallery; suitable for reuse by a mobile adapter.
 pub mod personal_gifs;
+pub mod protocol_identity;
 pub mod qr;
 pub mod quick_messages;
 pub mod reactions;

@@ -1051,3 +1051,10 @@ Entry template:
 - Changes: researched official Play/help and indexed screenshots; mobile search header, five-tab shell, honest disconnected screens, local draft workspace and tool navigation; drawn glyphs and system-inset handling. Gallery background index, search/tags/favorites/pagination/edit/confirmed delete with pure selection tests.
 - Verification: both version-code-4 debug APKs built/installed, 4 JVM tests per variant passed (3 gallery + 1 updater). Internal home rendered and tool navigation observed; bottom overlap found/fixed/rechecked. Final screenshot and APK hashes in `docs/verification/2026-11-22-android-shell.md`.
 - Status: partial. This is initial shell work, not a complete Zalo-like UI or Android login/send. Populated chat, full gallery UI, fork parity, keyboard/device/performance/network gates remain open. No real account or APK release used. Windows unchanged.
+
+## 2026-11-22 — Compile shared authentication for both Android ABIs (agent: Codex, GPT-6.1)
+- Request: Continue toward actual Android account/chat transport instead of additional disconnected screens.
+- Context / root cause: root library drags desktop/audio/WASM dependencies; Session depends on the call module only for device identity.
+- Changes: repository-internal ctdozlite-auth crate compiles exact shared protocol sources through module paths; moved unchanged device identity to protocol_identity with desktop delegation. Added standalone lockfile, ADR 0009 and verification record.
+- Verification: host auth check and 57 auth-source tests passed; final NDK release builds passed for ARM64 and x86_64; dependency tree excludes eframe/egui/cpal/wasmtime/rusqlite. Desktop 381 active library tests passed (2 ignored) and release build passed, EXE 83,068,404 bytes, SHA-256 `15213207847FC80D50916D525E88E647D86940A379EC922D88E12A28C0F26737`. No performance sample.
+- Status: partial. Android JNI/lifecycle, Keystore persistence, QR display and actual login/chat still incomplete. No real network login/QR request/account or updated APK used. Non-Windows plaintext storage must not be used for live Android credentials. See `docs/verification/2026-11-22-portable-auth.md`.

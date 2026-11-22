@@ -1,0 +1,25 @@
+[package]
+name = "ctdozlite-auth"
+version = "0.1.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+description = "Portable companion-protocol authentication compiled from shared Rust sources"
+
+[dependencies]
+aes = "0.8"
+cbc = "0.1"
+cipher = "0.4"
+md-5 = "0.10"
+sha2 = "0.10"
+base64 = "0.22"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+reqwest = { version = "0.12", default-features = false, features = ["cookies", "json", "rustls-tls"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "time", "net", "io-util", "sync"] }
+generic-array = "0.14"
+anyhow = "1"
+qrcode = { version = "0.14.1", default-features = false }
+getrandom = { version = "0.3", features = ["std"] }
+
+[lib]
+path = "src/lib.rs"
