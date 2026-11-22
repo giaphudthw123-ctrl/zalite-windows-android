@@ -11,3 +11,8 @@ crate-type = ["cdylib"]
 [dependencies]
 ctdozlite-core = { path = "../../crates/ctdozlite-core" }
 jni = "0.21.1"
+ctdozlite-auth = { path = "../../crates/ctdozlite-auth" }
+serde_json = "1"
+tokio = { version = "1", features = ["rt-multi-thread", "time"] }
+qrcode = { version = "0.14.1", default-features = false }
+anyhow = "1"

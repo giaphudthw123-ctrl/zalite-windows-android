@@ -3,6 +3,49 @@
 use jni::objects::{JByteArray, JObject, JString};
 use jni::sys::{jlong, jstring};
 use jni::JNIEnv;
+mod auth;
+
+#[no_mangle]
+pub extern "system" fn Java_org_ctdozlite_mobile_MainActivity_nativeAuthStart(
+    _env: JNIEnv,
+    _this: JObject,
+) -> jlong {
+    auth::start() as jlong
+}
+#[no_mangle]
+pub extern "system" fn Java_org_ctdozlite_mobile_MainActivity_nativeAuthCancel(
+    _env: JNIEnv,
+    _this: JObject,
+    generation: jlong,
+) {
+    auth::cancel(generation as u64);
+}
+#[no_mangle]
+pub extern "system" fn Java_org_ctdozlite_mobile_MainActivity_nativeAuthStatus(
+    env: JNIEnv,
+    _this: JObject,
+    generation: jlong,
+) -> jstring {
+    env.new_string(auth::status(generation as u64))
+        .map(|s| s.into_raw())
+        .unwrap_or(std::ptr::null_mut())
+}
+#[no_mangle]
+pub extern "system" fn Java_org_ctdozlite_mobile_MainActivity_nativeAuthTake(
+    env: JNIEnv,
+    _this: JObject,
+    generation: jlong,
+) -> jni::sys::jbyteArray {
+    let Some(mut bytes) = auth::take(generation as u64) else {
+        return std::ptr::null_mut();
+    };
+    let result = env
+        .byte_array_from_slice(&bytes)
+        .map(|a| a.into_raw())
+        .unwrap_or(std::ptr::null_mut());
+    bytes.fill(0);
+    result
+}
 
 #[no_mangle]
 pub extern "system" fn Java_org_ctdozlite_mobile_MainActivity_nativeExpandTemplate(

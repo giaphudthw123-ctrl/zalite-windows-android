@@ -22,6 +22,10 @@ foreach ($target in $targets) {
     $linker = Join-Path $llvm $target.Linker
     if (-not (Test-Path -LiteralPath $linker)) { throw "Missing NDK linker: $linker" }
     [Environment]::SetEnvironmentVariable($target.EnvName, $linker, 'Process')
+    # ring/TLS has C objects; Cargo's Rust linker setting alone does not configure cc-rs.
+    $ccTarget = $target.Rust.Replace('-', '_')
+    [Environment]::SetEnvironmentVariable("CC_$ccTarget", $linker, 'Process')
+    [Environment]::SetEnvironmentVariable("AR_$ccTarget", (Join-Path $llvm 'llvm-ar.exe'), 'Process')
     & cargo build --manifest-path (Join-Path $projectDir 'native/Cargo.toml') --locked --release --target $target.Rust
     if ($LASTEXITCODE -ne 0) { throw "Rust build failed for $($target.Rust)" }
     $source = Join-Path $projectDir "native/target/$($target.Rust)/release/libctdozlite_android.so"

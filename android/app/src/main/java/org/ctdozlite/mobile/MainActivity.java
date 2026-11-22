@@ -44,6 +44,12 @@ public final class MainActivity extends Activity {
     private native long nativeGifDimensions(byte[] bytes);
     private native String nativeNormalizeTemplate(String input);
     private native String nativeExpandTemplate(String input, String recipient, String time, String date);
+    private native long nativeAuthStart();
+    private native void nativeAuthCancel(long generation);
+    private native String nativeAuthStatus(long generation);
+    private native byte[] nativeAuthTake(long generation);
+    private long authGeneration;
+    private final android.os.Handler authHandler = new android.os.Handler(android.os.Looper.getMainLooper());
 
     private final ArrayList<String> templates = new ArrayList<>();
     private LinearLayout galleryList;
@@ -154,9 +160,57 @@ public final class MainActivity extends Activity {
         content.addView(templateList);
         renderGallery();
         renderTemplates();
-        mobileShell = new MobileShell(this, () -> setContentView(toolsScreen));
+        mobileShell = new MobileShell(this, () -> setContentView(toolsScreen), this::showLogin);
         mobileShell.show();
         handleSharedGif(getIntent());
+    }
+
+    @Override protected void onStop() {
+        super.onStop(); cancelAuth();
+    }
+    private void cancelAuth() {
+        if(authGeneration!=0) nativeAuthCancel(authGeneration);
+        authGeneration=0;authHandler.removeCallbacksAndMessages(null);
+    }
+    private void showLogin() {
+        cancelAuth();
+        LinearLayout page=new LinearLayout(this);page.setOrientation(LinearLayout.VERTICAL);page.setPadding(24,48,24,48);page.setBackgroundColor(0xffffffff);
+        TextView heading=new TextView(this);heading.setText("Đăng nhập bằng QR");heading.setTextSize(24);page.addView(heading);
+        TextView info=new TextView(this);info.setText("Luồng thiết bị đồng hành thử nghiệm. Khi tạo mã, dùng Zalo trên điện thoại đã đăng nhập để quét và xác nhận. Chưa hỗ trợ đăng nhập tài khoản chính bằng số điện thoại.");page.addView(info);
+        ImageView qr=new ImageView(this);qr.setAdjustViewBounds(true);page.addView(qr,new LinearLayout.LayoutParams(-1,320));
+        TextView progress=new TextView(this);progress.setText("Chưa tạo mã. Không quét bằng tài khoản thật khi chưa kiểm chứng xong.");page.addView(progress);
+        Button start=new Button(this);start.setText("Tạo mã QR");page.addView(start);
+        Button cancel=new Button(this);cancel.setText("Hủy và về Tin nhắn");cancel.setOnClickListener(v->{cancelAuth();qr.setImageDrawable(null);mobileShell.show();});page.addView(cancel);
+        Button check=new Button(this);check.setText("Kiểm tra kho bảo vệ bằng dữ liệu giả");page.addView(check);
+        check.setOnClickListener(v->{ check.setEnabled(false);new Thread(()->{boolean ok;try{SessionVault.selfTest(this);ok=true;}catch(Exception error){ok=false;}final boolean passed=ok;runOnUiThread(()->{check.setEnabled(true);progress.setText(passed?"Kiểm tra Keystore: khôi phục, dữ liệu ngẫu nhiên và chống sửa đổi đều qua.":"Thiết bị chưa vượt qua kiểm tra kho bảo vệ.");});},"vault-selftest").start(); });
+        start.setOnClickListener(v->{cancelAuth();start.setEnabled(false);authGeneration=nativeAuthStart();final long generation=authGeneration;
+            authHandler.post(new Runnable(){private boolean rendered; public void run(){
+                if(authGeneration!=generation||generation==0)return;
+                try {
+                    org.json.JSONObject state=new org.json.JSONObject(nativeAuthStatus(generation));String phase=state.optString("phase");
+                    if(phase.equals("waiting_scan")) {
+                        if(!rendered) {
+                        int width=state.optInt("width");String pixels=state.optString("pixels");
+                        if(width<21||width>177||pixels.length()!=width*width)throw new IllegalArgumentException();
+                        int side=width+8;android.graphics.Bitmap bitmap=android.graphics.Bitmap.createBitmap(side,side,android.graphics.Bitmap.Config.ARGB_8888);bitmap.eraseColor(0xffffffff);
+                        for(int y=0;y<width;y++)for(int x=0;x<width;x++)if(pixels.charAt(y*width+x)=='1')bitmap.setPixel(x+4,y+4,0xff000000);
+                        qr.setImageBitmap(android.graphics.Bitmap.createScaledBitmap(bitmap,side*4,side*4,false));rendered=true;
+                        }
+                        progress.setText("Chờ quét mã bằng Zalo trên điện thoại.");
+                    } else if(phase.equals("waiting_confirm"))progress.setText("Đã quét. Chờ xác nhận trên điện thoại.");
+                    else if(phase.equals("requesting"))progress.setText("Đang yêu cầu mã QR…");
+                    else if(phase.equals("authenticated")) {
+                        byte[] session=nativeAuthTake(generation);qr.setImageDrawable(null);progress.setText("Đang bảo vệ phiên trên thiết bị…");
+                        new Thread(()->{boolean ok=false;try{new SessionVault(MainActivity.this).save(session);ok=true;}catch(Exception error){}finally{if(session!=null)Arrays.fill(session,(byte)0);}final boolean saved=ok;runOnUiThread(()->{start.setEnabled(true);progress.setText(saved?"Đã xác thực và lưu phiên bảo vệ. Đồng bộ hội thoại chưa được nối.":"Không lưu được phiên bảo vệ. Hãy hủy và thử lại.");});},"session-vault-save").start();return;
+                    } else {qr.setImageDrawable(null);progress.setText(state.optString("message","Đã kết thúc hoặc hủy đăng nhập."));start.setEnabled(true);return;}
+                    authHandler.postDelayed(this,500);
+                } catch(Exception error){cancelAuth();qr.setImageDrawable(null);progress.setText("Không đọc được trạng thái đăng nhập.");start.setEnabled(true);}
+            }});
+        });
+        ScrollView loginScroll = new ScrollView(this);
+        loginScroll.setFillViewport(true);
+        loginScroll.addView(page);
+        setContentView(loginScroll);
     }
 
     @Override protected void onNewIntent(Intent intent) {

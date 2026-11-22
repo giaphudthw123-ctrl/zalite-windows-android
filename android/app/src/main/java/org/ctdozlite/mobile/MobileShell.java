@@ -11,11 +11,12 @@ import android.widget.*;
 final class MobileShell {
     private final Activity activity;
     private final Runnable tools;
+    private final Runnable login;
     private final int blue = Color.rgb(0, 104, 255), muted = Color.rgb(116, 126, 141);
     private final String[] labels = {"Tin nhắn", "Danh bạ", "Khám phá", "Nhật ký", "Cá nhân"};
     private LinearLayout root, body, navigation;
     private int selected;
-    MobileShell(Activity activity, Runnable tools) { this.activity = activity; this.tools = tools; }
+    MobileShell(Activity activity, Runnable tools, Runnable login) { this.activity = activity; this.tools = tools; this.login = login; }
     private int dp(int n) { return Math.round(n * activity.getResources().getDisplayMetrics().density); }
     private TextView text(String value, int size, int color) {
         TextView view = new TextView(activity); view.setText(value); view.setTextSize(size); view.setTextColor(color); return view;
@@ -61,11 +62,11 @@ final class MobileShell {
         if(index==0) {
             LinearLayout filters=new LinearLayout(activity); filters.setPadding(dp(16),dp(14),dp(16),dp(14));
             TextView all=text("Tất cả",16,blue); all.setTypeface(null,Typeface.BOLD); filters.addView(all); TextView unread=text("Chưa đọc",16,muted); unread.setPadding(dp(24),0,0,0); filters.addView(unread); body.addView(filters);
-            empty("Tin nhắn của bạn", "Chưa có hội thoại. Luồng đăng nhập và đồng bộ Zalo đang được phát triển.", "Mở bản nháp cục bộ", this::draft);
+            empty("Tin nhắn của bạn", "Kết nối tài khoản bằng mã QR thiết bị đồng hành.", "Đăng nhập bằng QR", login);
         } else if(index==1) empty("Danh bạ", "Bạn bè  •  Nhóm  •  OA\nChưa có dữ liệu danh bạ Zalo được kết nối.", "Mở tiện ích", tools);
         else if(index==2) empty("Tiện ích của bạn", "Thư viện GIF cá nhân, mẫu trả lời nhanh và cập nhật ứng dụng.", "GIF và mẫu tin", tools);
         else if(index==3) empty("Nhật ký", "Chưa có kết nối dữ liệu Nhật ký Zalo.", "Về tin nhắn", () -> select(0));
-        else empty("Cá nhân", "Zalite\nDữ liệu cục bộ trên thiết bị này", "Công cụ và cập nhật", tools);
+        else empty("Cá nhân", "Zalite\nDữ liệu cục bộ trên thiết bị này", "Bản nháp của tôi", this::draft);
     }
     private void empty(String title,String description,String action,Runnable click) {
         LinearLayout space=new LinearLayout(activity); space.setOrientation(LinearLayout.VERTICAL); space.setGravity(Gravity.CENTER); space.setPadding(dp(28),dp(24),dp(28),dp(24));

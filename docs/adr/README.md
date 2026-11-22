@@ -44,5 +44,6 @@ What we will do, in one paragraph, present tense.
 | [0007](0007-account-switch-rollback.md) | Runtime account switch rollback | Accepted for Windows prototype |
 | [0008](0008-windows-session-protection.md) | Windows user-bound Session protection | Accepted for Windows prototype |
 | [0009](0009-portable-companion-auth.md) | Portable companion authentication sources | Accepted for prototype |
+| [0010](0010-android-qr-session-owner.md) | Android QR Session owner and Keystore output | Prototype testing only |
 
 Related domain language lives in [`/GLOSSARY.md`](../../GLOSSARY.md).

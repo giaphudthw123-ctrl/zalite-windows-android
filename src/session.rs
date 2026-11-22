@@ -887,6 +887,12 @@ impl Session {
 
     /// Save the authenticated session to disk so subsequent runs can restore it without re-authenticating.
     pub fn save_to_file(&self, path: &str) -> Result<()> {
+        let bytes = self.serialize_for_secure_storage()?;
+        crate::session_storage::write(std::path::Path::new(path), &bytes)
+    }
+
+    /// Serialize credentials for an OS-protected storage adapter; never log these bytes.
+    pub fn serialize_for_secure_storage(&self) -> Result<Vec<u8>> {
         use base64::Engine;
         let saved = SavedSession {
             imei: self.imei.clone(),
@@ -902,9 +908,7 @@ impl Session {
             expired_at: self.expired_at,
             proxy_url: self.proxy_url.clone(),
         };
-        let text = serde_json::to_string_pretty(&saved)?;
-        crate::session_storage::write(std::path::Path::new(path), text.as_bytes())?;
-        Ok(())
+        Ok(serde_json::to_vec_pretty(&saved)?)
     }
 
     /// Load a previously saved session from disk and restore cookies, keys, and endpoints.
