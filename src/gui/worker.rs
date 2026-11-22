@@ -3630,17 +3630,21 @@ pub(super) fn spawn_session_worker(session: Session, gui_tx: GuiTx, egui_ctx: eg
                                 egui_ctx.request_repaint();
                                 continue;
                             }
+                            drop(session_guard);
                             let root = std::env::current_dir().ok();
+                            let image_account = account.clone();
                             let result = tokio::task::spawn_blocking(move || -> Result<Option<(String, egui::ColorImage)>, String> {
                                 let root = root.ok_or_else(|| "Không xác định được thư mục dữ liệu".to_owned())?;
-                                let db = root.join("zalo_history.db");
-                                let store = crate::store::MessageStore::open(db.to_str().ok_or_else(|| "Đường dẫn dữ liệu không hợp lệ".to_owned())?).map_err(|_| "Không mở được danh mục cục bộ".to_owned())?;
-                                let relative = crate::business_catalog::import_image(&store.conn, &root, &source).map_err(|error| error.to_string())?;
+                                let owner = std::fs::read_to_string(root.join("active_account"))
+                                    .map_err(|_| "Không xác định được tài khoản dữ liệu".to_owned())?;
+                                if owner.trim() != image_account {
+                                    return Err("Tài khoản đã thay đổi. Hãy chọn lại ảnh.".into());
+                                }
+                                let relative = crate::business_catalog::import_image(&root, &image_account, &source).map_err(|error| error.to_string())?;
                                 let preview = crate::business_catalog::preview_image(&root, &relative).map_err(|error| error.to_string())?;
                                 let color = egui::ColorImage::from_rgba_unmultiplied([preview.width() as usize, preview.height() as usize], preview.as_raw());
                                 Ok(Some((relative, color)))
                             }).await.unwrap_or_else(|_| Err("Không thể nhập ảnh sản phẩm".into()));
-                            drop(session_guard);
                             let _ = gui_tx.send(GuiEvent::CatalogImagePicked { account, request_id, result });
                             egui_ctx.request_repaint();
                         }

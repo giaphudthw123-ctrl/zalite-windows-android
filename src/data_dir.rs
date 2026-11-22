@@ -190,7 +190,10 @@ fn windows_storage_path(
     Ok((base, true))
 }
 
-fn create_private_file(parent: &Path, prefix: &str) -> std::io::Result<(PathBuf, std::fs::File)> {
+pub(crate) fn create_private_file(
+    parent: &Path,
+    prefix: &str,
+) -> std::io::Result<(PathBuf, std::fs::File)> {
     for _ in 0..100 {
         let path = parent.join(format!(
             "{prefix}-{}-{}",
@@ -289,6 +292,31 @@ pub fn copy_private(source: &Path, destination: &Path) -> Result<u64> {
     output.flush()?;
     output.sync_all()?;
     Ok(copied)
+}
+
+/// Stream a sensitive file to a private temporary file before replacing the destination.
+pub fn copy_private_atomic(source: &Path, destination: &Path) -> Result<u64> {
+    use std::io::Write;
+    let parent = destination
+        .parent()
+        .filter(|path| !path.as_os_str().is_empty())
+        .unwrap_or_else(|| Path::new("."));
+    ensure_private_dir(parent)?;
+    let (temporary, mut output) = create_private_file(parent, ".copy-tmp")?;
+    let result = (|| -> Result<u64> {
+        let mut input = std::fs::File::open(source)?;
+        let copied = std::io::copy(&mut input, &mut output)?;
+        output.flush()?;
+        output.sync_all()?;
+        drop(output);
+        std::fs::rename(&temporary, destination)?;
+        ensure_private_file(destination)?;
+        Ok(copied)
+    })();
+    if result.is_err() {
+        let _ = std::fs::remove_file(&temporary);
+    }
+    result
 }
 
 /// Owner-only temporary directory that removes all contents when dropped.
@@ -609,6 +637,21 @@ mod tests {
         assert_eq!(std::fs::read(occupied.join("keep")).unwrap(), b"retained");
         assert!(write_private_atomic(&root.join("missing/session.json"), b"fixture").is_err());
         assert_eq!(std::fs::read_dir(&root).unwrap().count(), 2);
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn atomic_copy_replaces_complete_file_and_preserves_old_on_read_failure() {
+        let root = fixture();
+        let source = root.join("source.json");
+        let destination = root.join("destination.json");
+        write_private_file(&source, b"new fixture").unwrap();
+        write_private_file(&destination, b"old fixture").unwrap();
+        assert_eq!(copy_private_atomic(&source, &destination).unwrap(), 11);
+        assert_eq!(std::fs::read(&destination).unwrap(), b"new fixture");
+        std::fs::remove_file(&source).unwrap();
+        assert!(copy_private_atomic(&source, &destination).is_err());
+        assert_eq!(std::fs::read(&destination).unwrap(), b"new fixture");
         std::fs::remove_dir_all(root).unwrap();
     }
 }

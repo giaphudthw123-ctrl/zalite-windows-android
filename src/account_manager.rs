@@ -2,7 +2,7 @@
 //!
 //! Stores isolated account sessions, thread caches, and history databases in `accounts/<uin>.*`.
 
-use anyhow::Result;
+use anyhow::{ensure, Context, Result};
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 
@@ -17,6 +17,42 @@ pub struct AccountProfile {
 
 pub fn accounts_dir() -> PathBuf {
     PathBuf::from("accounts")
+}
+
+pub(crate) fn validate_account_id(uin: &str) -> Result<()> {
+    ensure!(
+        !uin.is_empty()
+            && uin.len() <= 64
+            && uin
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_')),
+        "Mã tài khoản không hợp lệ"
+    );
+    Ok(())
+}
+
+fn require_regular_file(path: &Path) -> Result<()> {
+    let metadata = std::fs::symlink_metadata(path)?;
+    ensure!(
+        metadata.is_file() && !metadata.file_type().is_symlink(),
+        "Tệp dữ liệu tài khoản không hợp lệ"
+    );
+    Ok(())
+}
+
+fn validate_saved_session_account(path: &Path, uin: &str) -> Result<()> {
+    require_regular_file(path)?;
+    ensure!(
+        std::fs::metadata(path)?.len() <= 8 * 1024 * 1024,
+        "Tệp phiên tài khoản quá lớn"
+    );
+    let saved: serde_json::Value = serde_json::from_reader(std::fs::File::open(path)?)
+        .context("Tệp phiên tài khoản bị lỗi")?;
+    ensure!(
+        saved.pointer("/login/uin").and_then(|value| value.as_str()) == Some(uin),
+        "Tệp phiên không thuộc tài khoản đã chọn"
+    );
+    Ok(())
 }
 
 /// List all saved accounts in the `accounts/` directory.
@@ -81,62 +117,126 @@ pub fn list_saved_accounts(current_uin: &str) -> Vec<AccountProfile> {
 
 /// Save the current session and caches into `accounts/<uin>.*`
 pub fn save_current_account_snapshot(uin: &str) -> Result<()> {
+    save_current_account_snapshot_in(Path::new("."), uin)
+}
+
+fn save_current_account_snapshot_in(base: &Path, uin: &str) -> Result<()> {
     if uin.is_empty() {
         return Ok(());
     }
-    let dir = accounts_dir();
+    validate_account_id(uin)?;
+    let dir = base.join(accounts_dir());
     crate::data_dir::ensure_private_dir(&dir)?;
-    if Path::new("session.json").exists() {
-        crate::data_dir::ensure_private_file(Path::new("session.json"))?;
-        crate::data_dir::copy_private(Path::new("session.json"), &dir.join(format!("{uin}.json")))?;
+    let session = base.join("session.json");
+    let threads = base.join("threads_cache.json");
+    let history = base.join("zalo_history.db");
+    if session.exists() {
+        require_regular_file(&session)?;
+        crate::data_dir::ensure_private_file(&session)?;
+        crate::data_dir::copy_private_atomic(&session, &dir.join(format!("{uin}.json")))?;
     }
-    if Path::new("threads_cache.json").exists() {
-        crate::data_dir::copy_private(
-            Path::new("threads_cache.json"),
-            &dir.join(format!("{uin}_threads.json")),
-        )?;
+    if threads.exists() {
+        require_regular_file(&threads)?;
+        crate::data_dir::copy_private_atomic(&threads, &dir.join(format!("{uin}_threads.json")))?;
     }
-    if Path::new("zalo_history.db").exists() {
-        crate::data_dir::copy_private(
-            Path::new("zalo_history.db"),
-            &dir.join(format!("{uin}_history.db")),
-        )?;
+    if history.exists() {
+        require_regular_file(&history)?;
+        let marker = base.join(ACTIVE_ACCOUNT_MARKER);
+        if marker.exists() {
+            let owner = std::fs::read_to_string(&marker)?;
+            ensure!(owner.trim() == uin, "Lịch sử đang thuộc tài khoản khác");
+        }
+        snapshot_history(&history, &dir.join(format!("{uin}_history.db")))?;
     }
     Ok(())
+}
+
+/// SQLite writes a consistent snapshot even when the live source uses WAL.
+fn snapshot_history(source: &Path, destination: &Path) -> Result<()> {
+    require_regular_file(source)?;
+    let parent = destination
+        .parent()
+        .context("Thiếu thư mục sao lưu lịch sử")?;
+    crate::data_dir::ensure_private_dir(parent)?;
+    let (temporary, file) = crate::data_dir::create_private_file(parent, ".history-tmp")?;
+    drop(file);
+    let result = (|| -> Result<()> {
+        let source_path = source.to_str().context("Đường dẫn lịch sử không hợp lệ")?;
+        let temporary_path = temporary
+            .to_str()
+            .context("Đường dẫn sao lưu không hợp lệ")?;
+        let conn = rusqlite::Connection::open_with_flags(
+            source_path,
+            rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY,
+        )?;
+        conn.execute("VACUUM INTO ?1", [temporary_path])?;
+        drop(conn);
+        crate::data_dir::ensure_private_file(&temporary)?;
+        std::fs::rename(&temporary, destination)?;
+        crate::data_dir::ensure_private_file(destination)?;
+        Ok(())
+    })();
+    if result.is_err() {
+        let _ = std::fs::remove_file(&temporary);
+    }
+    result
 }
 
 /// Switch to a target account:
 /// 1. Saves current account snapshot to accounts/<current_uin>.*
 /// 2. Restores accounts/<target_uin>.* into session.json, threads_cache.json, zalo_history.db
 pub fn switch_to_account(current_uin: &str, target_uin: &str) -> Result<()> {
-    if target_uin.is_empty() {
-        anyhow::bail!("Target UIN is empty");
-    }
-    let dir = accounts_dir();
+    switch_to_account_in(Path::new("."), current_uin, target_uin)
+}
+
+fn switch_to_account_in(base: &Path, current_uin: &str, target_uin: &str) -> Result<()> {
+    validate_account_id(target_uin)?;
     if !current_uin.is_empty() {
-        let _ = save_current_account_snapshot(current_uin);
+        validate_account_id(current_uin)?;
     }
-    let _ = std::fs::remove_file("session.json");
-    let _ = std::fs::remove_file("threads_cache.json");
-    let _ = std::fs::remove_file("zalo_history.db");
-
+    if current_uin == target_uin {
+        return Ok(());
+    }
+    let dir = base.join(accounts_dir());
     let target_session = dir.join(format!("{target_uin}.json"));
-    if !target_session.exists() {
-        anyhow::bail!("Không tìm thấy dữ liệu phiên của tài khoản {target_uin}");
-    }
+    ensure!(
+        target_session.exists(),
+        "Không tìm thấy dữ liệu phiên của tài khoản {target_uin}"
+    );
+    validate_saved_session_account(&target_session, target_uin)?;
     crate::data_dir::ensure_private_file(&target_session)?;
-    crate::data_dir::copy_private(&target_session, Path::new("session.json"))?;
-
     let target_threads = dir.join(format!("{target_uin}_threads.json"));
-    if target_threads.exists() {
-        crate::data_dir::copy_private(&target_threads, Path::new("threads_cache.json"))?;
-    }
-
     let target_db = dir.join(format!("{target_uin}_history.db"));
-    if target_db.exists() {
-        crate::data_dir::copy_private(&target_db, Path::new("zalo_history.db"))?;
+    for optional in [&target_threads, &target_db] {
+        if optional.exists() {
+            require_regular_file(optional)?;
+            crate::data_dir::ensure_private_file(optional)?;
+        }
     }
-    crate::data_dir::write_private_file(Path::new(ACTIVE_ACCOUNT_MARKER), target_uin.as_bytes())?;
+    if !current_uin.is_empty() {
+        save_current_account_snapshot_in(base, current_uin)?;
+    }
+    let live_session = base.join("session.json");
+    let live_threads = base.join("threads_cache.json");
+    let live_db = base.join("zalo_history.db");
+    if live_session.exists() {
+        std::fs::remove_file(&live_session)?;
+    }
+    if live_threads.exists() {
+        std::fs::remove_file(&live_threads)?;
+    }
+    if live_db.exists() {
+        std::fs::remove_file(&live_db)?;
+    }
+    crate::data_dir::copy_private(&target_session, &live_session)?;
+
+    if target_threads.exists() {
+        crate::data_dir::copy_private(&target_threads, &live_threads)?;
+    }
+    if target_db.exists() {
+        crate::data_dir::copy_private(&target_db, &live_db)?;
+    }
+    crate::data_dir::write_private_file(&base.join(ACTIVE_ACCOUNT_MARKER), target_uin.as_bytes())?;
     Ok(())
 }
 
@@ -145,6 +245,7 @@ pub fn delete_saved_account(uin: &str) -> Result<()> {
     if uin.is_empty() {
         return Ok(());
     }
+    validate_account_id(uin)?;
     let dir = accounts_dir();
     let _ = std::fs::remove_file(dir.join(format!("{uin}.json")));
     let _ = std::fs::remove_file(dir.join(format!("{uin}_threads.json")));
@@ -184,6 +285,7 @@ fn activate_account_data_in(base: &Path, uin: &str) -> Result<ActivationOutcome>
     if uin.is_empty() {
         return Ok(ActivationOutcome::Fresh);
     }
+    validate_account_id(uin)?;
     let live_db = base.join(LIVE_DB);
     let live_threads = base.join(LIVE_THREADS);
     let marker = base.join(ACTIVE_ACCOUNT_MARKER);
@@ -253,6 +355,27 @@ mod tests {
         ));
         std::fs::create_dir_all(p.join("accounts")).unwrap();
         p
+    }
+
+    fn write_history(path: &Path, value: &str) {
+        let conn = rusqlite::Connection::open(path).unwrap();
+        conn.execute_batch("CREATE TABLE synthetic_note(value TEXT NOT NULL);")
+            .unwrap();
+        conn.execute("INSERT INTO synthetic_note(value) VALUES(?1)", [value])
+            .unwrap();
+    }
+
+    fn read_history(path: &Path) -> String {
+        rusqlite::Connection::open(path)
+            .unwrap()
+            .query_row("SELECT value FROM synthetic_note", [], |row| row.get(0))
+            .unwrap()
+    }
+
+    fn fake_session(uin: &str) -> Vec<u8> {
+        serde_json::json!({"login": {"uin": uin}})
+            .to_string()
+            .into_bytes()
     }
 
     #[test]
@@ -331,6 +454,98 @@ mod tests {
             .query_row("SELECT COUNT(*) FROM messages", [], |r| r.get(0))
             .unwrap();
         assert_eq!(n, 3);
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn missing_or_invalid_target_keeps_live_account_files() {
+        let base = temp_base("missing-target");
+        std::fs::write(base.join("session.json"), b"alice-session").unwrap();
+        std::fs::write(base.join(LIVE_DB), b"alice-history").unwrap();
+        std::fs::write(base.join(ACTIVE_ACCOUNT_MARKER), b"alice").unwrap();
+
+        assert!(switch_to_account_in(&base, "alice", "missing").is_err());
+        assert!(switch_to_account_in(&base, "alice", "../outside").is_err());
+        std::fs::write(base.join("accounts/missing.json"), b"malformed").unwrap();
+        assert!(switch_to_account_in(&base, "alice", "missing").is_err());
+        std::fs::write(base.join("accounts/missing.json"), fake_session("other")).unwrap();
+        assert!(switch_to_account_in(&base, "alice", "missing").is_err());
+        assert_eq!(
+            std::fs::read(base.join("session.json")).unwrap(),
+            b"alice-session"
+        );
+        assert_eq!(std::fs::read(base.join(LIVE_DB)).unwrap(), b"alice-history");
+        assert_eq!(
+            std::fs::read(base.join(ACTIVE_ACCOUNT_MARKER)).unwrap(),
+            b"alice"
+        );
+        assert!(delete_saved_account("../outside").is_err());
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn switching_accounts_preserves_each_accounts_session_and_history() {
+        let base = temp_base("roundtrip");
+        std::fs::write(base.join("session.json"), fake_session("alice")).unwrap();
+        write_history(&base.join(LIVE_DB), "alice-history");
+        std::fs::write(base.join("accounts/bob.json"), fake_session("bob")).unwrap();
+        write_history(&base.join("accounts/bob_history.db"), "bob-history");
+        switch_to_account_in(&base, "alice", "bob").unwrap();
+        assert_eq!(
+            std::fs::read(base.join("session.json")).unwrap(),
+            fake_session("bob")
+        );
+        assert_eq!(read_history(&base.join(LIVE_DB)), "bob-history");
+        assert_eq!(
+            read_history(&base.join("accounts/alice_history.db")),
+            "alice-history"
+        );
+        switch_to_account_in(&base, "bob", "alice").unwrap();
+        assert_eq!(
+            std::fs::read(base.join("session.json")).unwrap(),
+            fake_session("alice")
+        );
+        assert_eq!(read_history(&base.join(LIVE_DB)), "alice-history");
+        assert_eq!(
+            std::fs::read(base.join(ACTIVE_ACCOUNT_MARKER)).unwrap(),
+            b"alice"
+        );
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn snapshot_includes_committed_wal_data_while_database_is_open() {
+        let base = temp_base("wal-snapshot");
+        let live = base.join(LIVE_DB);
+        let conn = rusqlite::Connection::open(&live).unwrap();
+        conn.execute_batch("PRAGMA journal_mode=WAL; CREATE TABLE synthetic_note(value TEXT NOT NULL); INSERT INTO synthetic_note(value) VALUES('wal-row');").unwrap();
+        let parked = base.join("accounts/alice_history.db");
+        snapshot_history(&live, &parked).unwrap();
+        assert_eq!(read_history(&parked), "wal-row");
+        drop(conn);
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn failed_snapshot_preserves_previous_parked_database() {
+        let base = temp_base("bad-snapshot");
+        let live = base.join(LIVE_DB);
+        let parked = base.join("accounts/alice_history.db");
+        std::fs::write(&live, b"not sqlite").unwrap();
+        write_history(&parked, "previous-good-copy");
+        assert!(snapshot_history(&live, &parked).is_err());
+        assert_eq!(read_history(&parked), "previous-good-copy");
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn snapshot_rejects_history_owned_by_another_account() {
+        let base = temp_base("wrong-owner");
+        write_history(&base.join(LIVE_DB), "bob-history");
+        std::fs::write(base.join(ACTIVE_ACCOUNT_MARKER), b"bob").unwrap();
+        assert!(save_current_account_snapshot_in(&base, "alice").is_err());
+        assert!(!base.join("accounts/alice_history.db").exists());
+        assert_eq!(read_history(&base.join(LIVE_DB)), "bob-history");
         let _ = std::fs::remove_dir_all(&base);
     }
 }

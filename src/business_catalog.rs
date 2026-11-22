@@ -185,13 +185,24 @@ pub fn managed_image_path(root: &Path, relative: &str) -> Result<PathBuf> {
     let Some(Component::Normal(directory)) = parts.next() else {
         bail!("Đường dẫn ảnh sản phẩm không hợp lệ");
     };
-    let Some(Component::Normal(file)) = parts.next() else {
+    let Some(Component::Normal(second)) = parts.next() else {
         bail!("Đường dẫn ảnh sản phẩm không hợp lệ");
     };
     ensure!(
-        parts.next().is_none() && directory == IMAGE_DIRECTORY,
+        directory == IMAGE_DIRECTORY,
         "Đường dẫn ảnh sản phẩm không hợp lệ"
     );
+    let file = match (parts.next(), parts.next()) {
+        (None, None) => second, // Read-only compatibility with images imported before account scoping.
+        (Some(Component::Normal(file)), None) => {
+            let account = second
+                .to_str()
+                .ok_or_else(|| anyhow::anyhow!("Tài khoản ảnh không hợp lệ"))?;
+            crate::account_manager::validate_account_id(account)?;
+            file
+        }
+        _ => bail!("Đường dẫn ảnh sản phẩm không hợp lệ"),
+    };
     let filename = file
         .to_str()
         .ok_or_else(|| anyhow::anyhow!("Tên ảnh sản phẩm không hợp lệ"))?;
@@ -218,8 +229,9 @@ fn reject_symlink(path: &Path) -> Result<()> {
     }
 }
 
-fn library_bytes_after_cleanup(conn: &Connection, root: &Path) -> Result<u64> {
-    let directory = root.join(IMAGE_DIRECTORY);
+fn library_bytes(root: &Path, account: &str) -> Result<u64> {
+    crate::account_manager::validate_account_id(account)?;
+    let directory = root.join(IMAGE_DIRECTORY).join(account);
     reject_symlink(&directory)?;
     if !directory.exists() {
         return Ok(0);
@@ -233,25 +245,16 @@ fn library_bytes_after_cleanup(conn: &Connection, root: &Path) -> Result<u64> {
             "Thư viện ảnh sản phẩm chứa tệp không hợp lệ"
         );
         let name = entry.file_name();
-        let relative = format!("{IMAGE_DIRECTORY}/{}", name.to_string_lossy());
-        if managed_image_path(root, &relative).is_ok() {
-            let referenced: i64 = conn.query_row(
-                "SELECT EXISTS(SELECT 1 FROM products WHERE image_path=?1)",
-                [&relative],
-                |row| row.get(0),
-            )?;
-            if referenced == 0 {
-                std::fs::remove_file(entry.path())?;
-                continue;
-            }
-        }
+        let relative = format!("{IMAGE_DIRECTORY}/{account}/{}", name.to_string_lossy());
+        managed_image_path(root, &relative)?;
         total = total.saturating_add(metadata.len());
     }
     Ok(total)
 }
 
-/// Validate, deduplicate and privately copy a local product image with a total library cap.
-pub fn import_image(conn: &Connection, root: &Path, source: &Path) -> Result<String> {
+/// Validate, deduplicate and privately copy a local product image with a per-account cap.
+pub fn import_image(root: &Path, account: &str, source: &Path) -> Result<String> {
+    crate::account_manager::validate_account_id(account)?;
     let metadata = std::fs::symlink_metadata(source).context("Không đọc được tệp ảnh")?;
     ensure!(
         metadata.is_file() && !metadata.file_type().is_symlink(),
@@ -285,13 +288,16 @@ pub fn import_image(conn: &Connection, root: &Path, source: &Path) -> Result<Str
     image::load_from_memory_with_format(&bytes, format.expect("supported image format"))
         .context("Không giải mã được ảnh sản phẩm")?;
     let digest = format!("{:x}", Sha256::digest(&bytes));
-    let relative = format!("{IMAGE_DIRECTORY}/{digest}.{extension}");
+    let relative = format!("{IMAGE_DIRECTORY}/{account}/{digest}.{extension}");
     let destination = managed_image_path(root, &relative)?;
-    let directory = root.join(IMAGE_DIRECTORY);
+    let image_root = root.join(IMAGE_DIRECTORY);
+    reject_symlink(&image_root)?;
+    crate::data_dir::ensure_private_dir(&image_root)?;
+    let directory = image_root.join(account);
     reject_symlink(&directory)?;
     crate::data_dir::ensure_private_dir(&directory)?;
     reject_symlink(&destination)?;
-    let total = library_bytes_after_cleanup(conn, root)?;
+    let total = library_bytes(root, account)?;
     let existing = match std::fs::symlink_metadata(&destination) {
         Ok(metadata) => Some(metadata),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
@@ -325,6 +331,7 @@ pub fn import_image(conn: &Connection, root: &Path, source: &Path) -> Result<Str
 pub fn preview_image(root: &Path, relative: &str) -> Result<image::RgbaImage> {
     let path = managed_image_path(root, relative)?;
     reject_symlink(&root.join(IMAGE_DIRECTORY))?;
+    reject_symlink(path.parent().context("Thiếu thư mục ảnh sản phẩm")?)?;
     reject_symlink(&path)?;
     let metadata = std::fs::metadata(&path)?;
     ensure!(
@@ -575,7 +582,7 @@ mod tests {
         ))
         .save(&source)
         .unwrap();
-        let first = import_image(&store.conn, directory.path(), &source).unwrap();
+        let first = import_image(directory.path(), "alice", &source).unwrap();
         assert_eq!(
             preview_image(directory.path(), &first)
                 .unwrap()
@@ -583,7 +590,7 @@ mod tests {
             (2, 2)
         );
         assert_eq!(
-            import_image(&store.conn, directory.path(), &source).unwrap(),
+            import_image(directory.path(), "alice", &source).unwrap(),
             first
         );
         let mut product = Product {
@@ -600,9 +607,61 @@ mod tests {
             .unwrap()
             .set_len(MAX_IMAGE_BYTES + 1)
             .unwrap();
-        assert!(import_image(&store.conn, directory.path(), &oversized).is_err());
+        assert!(import_image(directory.path(), "alice", &oversized).is_err());
+        assert!(import_image(directory.path(), "../bob", &source).is_err());
         let managed = managed_image_path(directory.path(), &product.image_path).unwrap();
         std::fs::write(&managed, b"tampered").unwrap();
         assert!(preview_image(directory.path(), &product.image_path).is_err());
+    }
+
+    #[test]
+    fn importing_for_one_account_keeps_other_accounts_images() {
+        let bob = database();
+        let directory = crate::data_dir::PrivateTempDir::new("catalog-account-images").unwrap();
+        let source = directory.path().join("source.png");
+        image::DynamicImage::ImageRgba8(image::RgbaImage::from_pixel(
+            2,
+            2,
+            image::Rgba([12, 34, 56, 255]),
+        ))
+        .save(&source)
+        .unwrap();
+        let alice_path = import_image(directory.path(), "alice", &source).unwrap();
+        let bob_path = import_image(directory.path(), "bob", &source).unwrap();
+        assert_ne!(alice_path, bob_path);
+        save(
+            &bob.conn,
+            Product {
+                name: "Bob's product".into(),
+                image_path: bob_path.clone(),
+                ..Default::default()
+            },
+            1,
+        )
+        .unwrap();
+        image::DynamicImage::ImageRgba8(image::RgbaImage::from_pixel(
+            2,
+            2,
+            image::Rgba([78, 90, 12, 255]),
+        ))
+        .save(&source)
+        .unwrap();
+        import_image(directory.path(), "alice", &source).unwrap();
+        assert!(managed_image_path(directory.path(), &alice_path)
+            .unwrap()
+            .is_file());
+        assert!(managed_image_path(directory.path(), &bob_path)
+            .unwrap()
+            .is_file());
+        assert!(preview_image(directory.path(), &bob_path).is_ok());
+
+        // Previously imported flat paths remain readable after new account-scoped imports.
+        let legacy = alice_path.replacen("alice/", "", 1);
+        std::fs::copy(
+            managed_image_path(directory.path(), &bob_path).unwrap(),
+            managed_image_path(directory.path(), &legacy).unwrap(),
+        )
+        .unwrap();
+        assert!(preview_image(directory.path(), &legacy).is_ok());
     }
 }

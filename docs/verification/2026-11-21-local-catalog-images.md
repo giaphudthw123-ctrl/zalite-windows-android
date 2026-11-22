@@ -1,5 +1,7 @@
 # Local product images — 2026-11-21
 
+Later account-scoping changes are recorded in [the account storage checkpoint](2026-11-21-account-storage.md). Its current import path no longer deletes orphaned images automatically.
+
 The Windows catalog editor now imports a PNG, JPEG or GIF from a local file, shows a bounded preview and can attach the managed copy alongside the product's text card in the current composer. The user must inspect the recipient and send manually. The app does not create a Zalo Catalog item.
 
 The import runs off the UI thread. It rejects symlinks, files above 10 MiB, unsupported or undecodable formats, and images above 16 million pixels. The image is copied into a private hash-named file, deduplicated, and the managed directory has a 200 MiB cap. Preview checks the stored content hash and decodes at no more than 160 by 160 pixels. Orphaned managed images are removed on a later import.

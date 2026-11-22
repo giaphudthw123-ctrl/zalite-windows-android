@@ -6,14 +6,14 @@ Nhánh này phát triển từ [ctdozlite-next của Minh Khang](https://github.
 
 | Cải tiến ở nhánh này | Trạng thái |
 | --- | --- |
-| Windows: dữ liệu mặc định trong AppData, giới hạn nơi gửi phiên, cập nhật thủ công có kiểm tra URL/SHA-256 và không tự chạy bộ cài | Đã code và kiểm thử một phần; phiên/chat trên Windows chưa được mã hóa khi lưu |
+| Windows: dữ liệu mặc định trong AppData, giới hạn nơi gửi phiên, cập nhật thủ công có kiểm tra URL/SHA-256 và không tự chạy bộ cài | Đã code và kiểm thử một phần; bản sao SQLite khi đổi tài khoản nhất quán hơn, nhưng phiên/chat trên Windows chưa được mã hóa khi lưu |
 | GIF cá nhân: nhập tệp, khử trùng, xem trước, chọn/xóa trên Windows; nhập/xem trước trên Android | Đã chạy cục bộ; chưa chứng minh gửi GIF qua Zalo hoạt động |
 | Mẫu tin nhanh, nhãn hội thoại, nhắc việc | Fork v0.3.2 có mẫu tin; nhánh này thêm nhóm, tìm kiếm trong trình quản lý và biến cục bộ; Android có 100 mẫu tạo/sửa/tìm/xóa |
-| Danh mục sản phẩm cục bộ trên Windows | Thêm/sửa/tìm/xóa có xác nhận, giá/biến thể/ghi chú riêng, nhập/xem trước ảnh PNG/JPEG/GIF và chèn thẻ văn bản cùng ảnh vào ô soạn; chưa kiểm thử UI sau đăng nhập hoặc gửi ảnh thật |
+| Danh mục sản phẩm cục bộ trên Windows | Thêm/sửa/tìm/xóa có xác nhận, giá/biến thể/ghi chú riêng, nhập/xem trước ảnh PNG/JPEG/GIF theo tài khoản và chèn thẻ văn bản cùng ảnh vào ô soạn; chưa kiểm thử UI sau đăng nhập hoặc gửi ảnh thật |
 | Hai APK với định danh và kênh GitHub khác nhau | Đã build/cài trên giả lập; chưa có APK tương thích từ fork và repo nội bộ chưa phát hành |
 | Giao diện Windows: ô nhập nhiều dòng, thanh công cụ phía trên, tab Chưa đọc, menu công cụ và menu cài đặt ở thanh trái | Đã code, đang kiểm thử bản chạy mới; những mục cục bộ không đại diện cho quyền zBusiness |
 
-Xem [bảng quyền zBusiness và phạm vi thực tế](docs/ZBUSINESS_MATRIX_2026-11-14.md), [bằng chứng kiểm thử ảnh danh mục](docs/verification/2026-11-21-local-catalog-images.md), [Android](android/README.md) và [ghi chú bảo mật Windows](docs/verification/2026-11-14-windows-audit.md). Không có tính năng nào ở đây mở khóa quyền Premium, hạn mức tài khoản hay Catalog chính thức.
+Xem [bảng quyền zBusiness và phạm vi thực tế](docs/ZBUSINESS_MATRIX_2026-11-14.md), [kiểm chứng tách dữ liệu tài khoản](docs/verification/2026-11-21-account-storage.md), [Android](android/README.md) và [ghi chú bảo mật Windows](docs/verification/2026-11-14-windows-audit.md). Không có tính năng nào ở đây mở khóa quyền Premium, hạn mức tài khoản hay Catalog chính thức.
 
 ---
 
