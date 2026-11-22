@@ -903,7 +903,7 @@ impl Session {
             proxy_url: self.proxy_url.clone(),
         };
         let text = serde_json::to_string_pretty(&saved)?;
-        crate::data_dir::write_private_atomic(std::path::Path::new(path), text.as_bytes())?;
+        crate::session_storage::write(std::path::Path::new(path), text.as_bytes())?;
         Ok(())
     }
 
@@ -911,8 +911,8 @@ impl Session {
     pub fn load_from_file(&mut self, path: &str) -> Result<()> {
         use base64::Engine;
         crate::data_dir::ensure_private_file(std::path::Path::new(path))?;
-        let text = std::fs::read_to_string(path)?;
-        let saved: SavedSession = serde_json::from_str(&text)?;
+        let bytes = crate::session_storage::read(std::path::Path::new(path))?;
+        let saved: SavedSession = serde_json::from_slice(&bytes)?;
 
         if self.proxy_url.is_none() {
             if let Some(ref p) = saved.proxy_url {
@@ -1587,7 +1587,7 @@ mod tests {
         source.session_key = Some("fixture-session-key".into());
         source.zpw_sek = Some("fixture-auth-token".into());
         source.save_to_file(path.to_str().unwrap()).unwrap();
-        let bytes = std::fs::read(&path).unwrap();
+        let bytes = crate::session_storage::read(&path).unwrap();
         let saved: SavedSession = serde_json::from_slice(&bytes).unwrap();
         assert_eq!(saved.computer_name, "fixture-device");
         assert_eq!(saved.session_key.as_deref(), Some("fixture-session-key"));

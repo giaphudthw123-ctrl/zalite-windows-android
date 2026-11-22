@@ -1203,8 +1203,8 @@ pub fn deduplicate_threads(
 }
 
 fn active_uin_from_session() -> Option<String> {
-    if let Ok(text) = std::fs::read_to_string("session.json") {
-        if let Ok(val) = serde_json::from_str::<serde_json::Value>(&text) {
+    if let Ok(bytes) = crate::session_storage::read(std::path::Path::new("session.json")) {
+        if let Ok(val) = serde_json::from_slice::<serde_json::Value>(&bytes) {
             if let Some(uin) = val.pointer("/login/uin").and_then(|v| v.as_str()) {
                 if !uin.is_empty() {
                     return Some(uin.to_string());

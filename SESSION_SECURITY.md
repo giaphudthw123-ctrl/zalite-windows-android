@@ -1,5 +1,7 @@
 # Session Security Notice
 
+Windows prototype update (2026-11-22): new Session writes and account snapshots use user-bound DPAPI. Existing JSON remains readable and may remain plaintext until saved again. Protected files are not portable backups; software running as the same Windows user can still decrypt them. See `docs/adr/0008-windows-session-protection.md`. Chat databases and media are not covered.
+
 `session.json` contains live authentication credentials, session tokens (`zpw_sek`, `zpw_enk`), encryption keys, and hardware identifiers (IMEI) for your Zalo account.
 
 **Security Requirements:**

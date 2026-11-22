@@ -46,7 +46,7 @@ fn validate_saved_session_account(path: &Path, uin: &str) -> Result<()> {
         std::fs::metadata(path)?.len() <= 8 * 1024 * 1024,
         "Tệp phiên tài khoản quá lớn"
     );
-    let saved: serde_json::Value = serde_json::from_reader(std::fs::File::open(path)?)
+    let saved: serde_json::Value = serde_json::from_slice(&crate::session_storage::read(path)?)
         .context("Tệp phiên tài khoản bị lỗi")?;
     ensure!(
         saved.pointer("/login/uin").and_then(|value| value.as_str()) == Some(uin),
@@ -72,8 +72,8 @@ pub fn list_saved_accounts(current_uin: &str) -> Vec<AccountProfile> {
             if file_stem.ends_with("_threads") {
                 continue;
             }
-            if let Ok(text) = std::fs::read_to_string(&path) {
-                if let Ok(val) = serde_json::from_str::<serde_json::Value>(&text) {
+            if let Ok(bytes) = crate::session_storage::read(&path) {
+                if let Ok(val) = serde_json::from_slice::<serde_json::Value>(&bytes) {
                     if let Some(login) = val.get("login") {
                         let uin = login
                             .get("uin")
@@ -133,7 +133,8 @@ fn save_current_account_snapshot_in(base: &Path, uin: &str) -> Result<()> {
     if session.exists() {
         require_regular_file(&session)?;
         crate::data_dir::ensure_private_file(&session)?;
-        crate::data_dir::copy_private_atomic(&session, &dir.join(format!("{uin}.json")))?;
+        let bytes = crate::session_storage::read(&session)?;
+        crate::session_storage::write(&dir.join(format!("{uin}.json")), &bytes)?;
     }
     if threads.exists() {
         require_regular_file(&threads)?;
@@ -551,7 +552,7 @@ mod tests {
         std::fs::write(base.join("accounts/missing.json"), fake_session("other")).unwrap();
         assert!(switch_to_account_in(&base, "alice", "missing").is_err());
         assert_eq!(
-            std::fs::read(base.join("session.json")).unwrap(),
+            crate::session_storage::read(&base.join("session.json")).unwrap(),
             b"alice-session"
         );
         assert_eq!(std::fs::read(base.join(LIVE_DB)).unwrap(), b"alice-history");
@@ -572,7 +573,7 @@ mod tests {
         write_history(&base.join("accounts/bob_history.db"), "bob-history");
         switch_to_account_in(&base, "alice", "bob").unwrap();
         assert_eq!(
-            std::fs::read(base.join("session.json")).unwrap(),
+            crate::session_storage::read(&base.join("session.json")).unwrap(),
             fake_session("bob")
         );
         assert_eq!(read_history(&base.join(LIVE_DB)), "bob-history");
@@ -582,7 +583,7 @@ mod tests {
         );
         switch_to_account_in(&base, "bob", "alice").unwrap();
         assert_eq!(
-            std::fs::read(base.join("session.json")).unwrap(),
+            crate::session_storage::read(&base.join("session.json")).unwrap(),
             fake_session("alice")
         );
         assert_eq!(read_history(&base.join(LIVE_DB)), "alice-history");

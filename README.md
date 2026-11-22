@@ -6,7 +6,7 @@ Nhánh này phát triển từ [ctdozlite-next của Minh Khang](https://github.
 
 | Cải tiến ở nhánh này | Trạng thái |
 | --- | --- |
-| Windows: dữ liệu mặc định trong AppData, giới hạn nơi gửi phiên, cập nhật thủ công có kiểm tra URL/SHA-256 và không tự chạy bộ cài | Đã code và kiểm thử một phần; bản sao SQLite khi đổi tài khoản nhất quán hơn, nhưng phiên/chat trên Windows chưa được mã hóa khi lưu |
+| Windows: dữ liệu mặc định trong AppData, giới hạn nơi gửi phiên, cập nhật thủ công có kiểm tra URL/SHA-256 và không tự chạy bộ cài | Phiên mới lưu được bảo vệ bằng DPAPI theo người dùng Windows; đọc được JSON cũ. Chat/ảnh chưa mã hóa, còn cần thử phiên thật và người dùng Windows khác |
 | GIF cá nhân: nhập tệp, khử trùng, xem trước, chọn/xóa trên Windows; nhập/xem trước trên Android | Đã chạy cục bộ; chưa chứng minh gửi GIF qua Zalo hoạt động |
 | Mẫu tin nhanh, nhãn hội thoại, nhắc việc | Fork v0.3.2 có mẫu tin; nhánh này thêm nhóm, tìm kiếm trong trình quản lý và biến cục bộ; Android có 100 mẫu tạo/sửa/tìm/xóa |
 | Danh mục sản phẩm cục bộ trên Windows | Thêm/sửa/tìm/xóa có xác nhận, giá/biến thể/ghi chú riêng, nhập/xem trước ảnh PNG/JPEG/GIF theo tài khoản và chèn thẻ văn bản cùng ảnh vào ô soạn; chưa kiểm thử UI sau đăng nhập hoặc gửi ảnh thật |
