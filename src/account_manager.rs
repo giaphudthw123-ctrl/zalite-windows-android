@@ -216,28 +216,108 @@ fn switch_to_account_in(base: &Path, current_uin: &str, target_uin: &str) -> Res
     if !current_uin.is_empty() {
         save_current_account_snapshot_in(base, current_uin)?;
     }
-    let live_session = base.join("session.json");
-    let live_threads = base.join("threads_cache.json");
-    let live_db = base.join("zalo_history.db");
-    if live_session.exists() {
-        std::fs::remove_file(&live_session)?;
-    }
-    if live_threads.exists() {
-        std::fs::remove_file(&live_threads)?;
-    }
-    if live_db.exists() {
-        std::fs::remove_file(&live_db)?;
-    }
-    crate::data_dir::copy_private(&target_session, &live_session)?;
+    replace_account_files(
+        base,
+        &target_session,
+        &target_threads,
+        &target_db,
+        target_uin,
+        |_| Ok(()),
+    )
+}
 
-    if target_threads.exists() {
-        crate::data_dir::copy_private(&target_threads, &live_threads)?;
+/// Stage every replacement and rollback copy before touching the live account.
+/// Backups remain on disk if rollback itself fails; this does not guarantee power-loss recovery.
+fn replace_account_files(
+    base: &Path,
+    session: &Path,
+    threads: &Path,
+    database: &Path,
+    target: &str,
+    before_replace: impl Fn(usize) -> Result<()>,
+) -> Result<()> {
+    let sources = [
+        Some(session),
+        threads.exists().then_some(threads),
+        database.exists().then_some(database),
+        None,
+    ];
+    let names = ["session.json", LIVE_THREADS, LIVE_DB, ACTIVE_ACCOUNT_MARKER];
+    let mut staged = Vec::new();
+    let mut backups = Vec::new();
+    let mut temporary = Vec::new();
+    let mut preserve_backups = false;
+    let result = (|| -> Result<()> {
+        for (index, name) in names.iter().enumerate() {
+            let live = base.join(name);
+            if live.exists() {
+                require_regular_file(&live)?;
+                let (backup, file) =
+                    crate::data_dir::create_private_file(base, ".account-rollback")?;
+                drop(file);
+                temporary.push(backup.clone());
+                crate::data_dir::copy_private(&live, &backup)?;
+                backups.push(Some(backup));
+            } else {
+                backups.push(None);
+            }
+            if sources[index].is_some() || index == 3 {
+                let (path, file) = crate::data_dir::create_private_file(base, ".account-stage")?;
+                drop(file);
+                temporary.push(path.clone());
+                if let Some(source) = sources[index] {
+                    crate::data_dir::copy_private(source, &path)?;
+                } else {
+                    crate::data_dir::write_private_file(&path, target.as_bytes())?;
+                }
+                staged.push(Some(path));
+            } else {
+                staged.push(None);
+            }
+        }
+        let mut attempted = 0;
+        let apply = (|| -> Result<()> {
+            for (index, name) in names.iter().enumerate() {
+                before_replace(index)?;
+                attempted = index + 1;
+                let live = base.join(name);
+                if let Some(path) = &staged[index] {
+                    std::fs::rename(path, &live)?;
+                } else if live.exists() {
+                    std::fs::remove_file(&live)?;
+                }
+            }
+            Ok(())
+        })();
+        if let Err(error) = apply {
+            let mut rollback_failed = false;
+            for index in (0..attempted).rev() {
+                let live = base.join(names[index]);
+                let restore = if let Some(backup) = &backups[index] {
+                    crate::data_dir::copy_private_atomic(backup, &live).map(|_| ())
+                } else if live.exists() {
+                    std::fs::remove_file(&live).map_err(anyhow::Error::from)
+                } else {
+                    Ok(())
+                };
+                rollback_failed |= restore.is_err();
+            }
+            if rollback_failed {
+                preserve_backups = true;
+                anyhow::bail!("Chuyển tài khoản lỗi; chưa khôi phục đủ tệp. Bản dự phòng .account-rollback được giữ trong thư mục dữ liệu.");
+            }
+            return Err(error.context("Không chuyển được tài khoản; đã khôi phục tệp hiện tại"));
+        }
+        Ok(())
+    })();
+    for path in temporary {
+        if preserve_backups && backups.iter().flatten().any(|backup| backup == &path) {
+            continue;
+        }
+        // Cleanup is best effort; a failed cleanup must not mask the switch failure.
+        let _ = std::fs::remove_file(path);
     }
-    if target_db.exists() {
-        crate::data_dir::copy_private(&target_db, &live_db)?;
-    }
-    crate::data_dir::write_private_file(&base.join(ACTIVE_ACCOUNT_MARKER), target_uin.as_bytes())?;
-    Ok(())
+    result
 }
 
 /// Delete a saved account from `accounts/`
@@ -547,5 +627,44 @@ mod tests {
         assert!(!base.join("accounts/alice_history.db").exists());
         assert_eq!(read_history(&base.join(LIVE_DB)), "bob-history");
         let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn replacement_failure_restores_every_live_file() {
+        for fail_at in 0..4 {
+            let base = temp_base("rollback");
+            let sources = [
+                base.join("accounts/bob.json"),
+                base.join("accounts/bob_threads.json"),
+                base.join("accounts/bob_history.db"),
+            ];
+            for source in &sources {
+                std::fs::write(source, b"target").unwrap();
+            }
+            for name in ["session.json", LIVE_THREADS, LIVE_DB, ACTIVE_ACCOUNT_MARKER] {
+                std::fs::write(base.join(name), b"original").unwrap();
+            }
+            assert!(replace_account_files(
+                &base,
+                &sources[0],
+                &sources[1],
+                &sources[2],
+                "bob",
+                |index| {
+                    ensure!(index != fail_at, "synthetic replacement failure");
+                    Ok(())
+                }
+            )
+            .is_err());
+            for name in ["session.json", LIVE_THREADS, LIVE_DB, ACTIVE_ACCOUNT_MARKER] {
+                assert_eq!(std::fs::read(base.join(name)).unwrap(), b"original");
+            }
+            assert!(!std::fs::read_dir(&base).unwrap().any(|entry| entry
+                .unwrap()
+                .file_name()
+                .to_string_lossy()
+                .starts_with(".account-")));
+            let _ = std::fs::remove_dir_all(base);
+        }
     }
 }

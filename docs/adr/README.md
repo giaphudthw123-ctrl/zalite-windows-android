@@ -41,5 +41,6 @@ What we will do, in one paragraph, present tense.
 | [0004](0004-local-product-catalog.md) | Account-local product catalog | Accepted for Windows prototype |
 | [0005](0005-account-scoped-product-images.md) | Account-scoped product images | Accepted for Windows prototype |
 | [0006](0006-consistent-account-snapshots.md) | Consistent account snapshots | Accepted for Windows prototype |
+| [0007](0007-account-switch-rollback.md) | Runtime account switch rollback | Accepted for Windows prototype |
 
 Related domain language lives in [`/GLOSSARY.md`](../../GLOSSARY.md).
