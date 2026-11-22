@@ -406,6 +406,10 @@ pub enum WorkerCmd {
     SwitchAccount {
         target_uin: String,
     },
+    RefreshSavedAccounts {
+        account: String,
+        delete: Option<String>,
+    },
 }
 
 pub(super) static WORKER_TX: std::sync::OnceLock<tokio::sync::mpsc::UnboundedSender<WorkerCmd>> =
@@ -1362,6 +1366,23 @@ pub(super) fn spawn_session_worker(session: Session, gui_tx: GuiTx, egui_ctx: eg
                                 *ps = crate::chat::PollState::default();
                             }
                             let _ = gui_tx.send(GuiEvent::LoggedOut);
+                            egui_ctx.request_repaint();
+                        }
+                        WorkerCmd::RefreshSavedAccounts { account, delete } => {
+                            let active = session.lock().await.login.as_ref().map(|login| login.uin.clone()).unwrap_or_default();
+                            let result = if active != account || active.is_empty() {
+                                Err("Tài khoản đã thay đổi. Hãy mở lại danh sách.".to_owned())
+                            } else {
+                                let owner = account.clone();
+                                tokio::task::spawn_blocking(move || -> Result<Vec<crate::account_manager::AccountProfile>, String> {
+                                    if let Some(target) = delete {
+                                        if target == owner { return Err("Không xóa tài khoản đang sử dụng.".into()); }
+                                        crate::account_manager::delete_saved_account(&target).map_err(|_| "Không xóa được tài khoản đã lưu.".to_owned())?;
+                                    }
+                                    Ok(crate::account_manager::list_saved_accounts(&owner))
+                                }).await.unwrap_or_else(|_| Err("Không tải được danh sách tài khoản.".into()))
+                            };
+                            let _ = gui_tx.send(GuiEvent::SavedAccounts { account, result });
                             egui_ctx.request_repaint();
                         }
                         WorkerCmd::SwitchAccount { target_uin } => {

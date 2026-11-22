@@ -328,9 +328,17 @@ pub fn delete_saved_account(uin: &str) -> Result<()> {
     }
     validate_account_id(uin)?;
     let dir = accounts_dir();
-    let _ = std::fs::remove_file(dir.join(format!("{uin}.json")));
-    let _ = std::fs::remove_file(dir.join(format!("{uin}_threads.json")));
-    let _ = std::fs::remove_file(dir.join(format!("{uin}_history.db")));
+    for filename in [
+        format!("{uin}.json"),
+        format!("{uin}_threads.json"),
+        format!("{uin}_history.db"),
+    ] {
+        match std::fs::remove_file(dir.join(filename)) {
+            Ok(()) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => return Err(error.into()),
+        }
+    }
     Ok(())
 }
 

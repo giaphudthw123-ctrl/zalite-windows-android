@@ -346,6 +346,10 @@ pub enum GuiEvent {
         error: Option<String>,
     },
     ProxyUpdated(Result<Option<String>, String>),
+    SavedAccounts {
+        account: String,
+        result: Result<Vec<crate::account_manager::AccountProfile>, String>,
+    },
     FileDownloaded(Result<(String, String), String>),
     LoggedOut,
     HistoryReachedStart(String),
@@ -751,6 +755,9 @@ impl GuiTx {
 }
 
 pub struct ZaloGuiApp {
+    saved_accounts_owner: Option<String>,
+    saved_accounts_pending: bool,
+    saved_accounts: Vec<crate::account_manager::AccountProfile>,
     productivity: productivity::State,
     doc_preview: doc_preview_ui::State,
     voice: voice_ui::State,
@@ -1143,6 +1150,9 @@ impl ZaloGuiApp {
 
         let app = Self {
             productivity: Default::default(),
+            saved_accounts_owner: None,
+            saved_accounts_pending: false,
+            saved_accounts: Vec::new(),
             doc_preview: Default::default(),
             voice: Default::default(),
             video_tools_status: "Đang kiểm tra công cụ gọi video…".into(),
@@ -1847,6 +1857,9 @@ impl ZaloGuiApp {
                     threads,
                 } => {
                     self.is_logged_in = true;
+                    self.saved_accounts_owner = None;
+                    self.saved_accounts.clear();
+                    self.saved_accounts_pending = false;
                     self.user_uin = uin;
                     self.user_name = name.clone();
                     self.user_avatar = avatar;
@@ -2944,6 +2957,17 @@ impl ZaloGuiApp {
                             if changed {
                                 self.persist_threads_async();
                             }
+                        }
+                    }
+                }
+                GuiEvent::SavedAccounts { account, result } => {
+                    if account == self.user_uin
+                        && self.saved_accounts_owner.as_deref() == Some(account.as_str())
+                    {
+                        self.saved_accounts_pending = false;
+                        match result {
+                            Ok(accounts) => self.saved_accounts = accounts,
+                            Err(error) => self.show_toast(error),
                         }
                     }
                 }

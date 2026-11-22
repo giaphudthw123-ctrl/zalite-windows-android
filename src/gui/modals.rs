@@ -1962,7 +1962,14 @@ impl ZaloGuiApp {
                                             );
                                             ui.add_space(10.0);
 
-                                            let saved = crate::account_manager::list_saved_accounts(&self.user_uin);
+                                            let refresh = ui.add_enabled(!self.saved_accounts_pending, egui::Button::new("Làm mới danh sách")).clicked();
+                                            if self.saved_accounts_owner.as_deref() != Some(self.user_uin.as_str()) || refresh {
+                                                self.saved_accounts_owner = Some(self.user_uin.clone());
+                                                self.saved_accounts.clear();
+                                                self.saved_accounts_pending = WORKER_TX.get().is_some_and(|tx| tx.send(WorkerCmd::RefreshSavedAccounts { account: self.user_uin.clone(), delete: None }).is_ok());
+                                            }
+                                            if self.saved_accounts_pending { ui.spinner(); }
+                                            let saved = self.saved_accounts.clone();
                                             let mut delete_target: Option<String> = None;
 
                                             for acc in &saved {
@@ -2020,7 +2027,9 @@ impl ZaloGuiApp {
                                             }
 
                                             if let Some(target) = delete_target {
-                                                let _ = crate::account_manager::delete_saved_account(&target);
+                                                if !self.saved_accounts_pending {
+                                                    self.saved_accounts_pending = WORKER_TX.get().is_some_and(|tx| tx.send(WorkerCmd::RefreshSavedAccounts { account: self.user_uin.clone(), delete: Some(target) }).is_ok());
+                                                }
                                             }
 
                                             ui.add_space(14.0);
