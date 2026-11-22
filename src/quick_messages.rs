@@ -108,27 +108,7 @@ pub fn composer_insertion(item: &QuickMessage) -> ComposerInsertion {
 
 /// Expand only the supported local placeholders in one pass. Values are not parsed again.
 pub fn expand_local_variables(content: &str, recipient: &str, time: &str, date: &str) -> String {
-    let mut result = String::with_capacity(content.len() + recipient.len());
-    let mut rest = content;
-    while !rest.is_empty() {
-        let replacement = if rest.starts_with("{ten}") {
-            Some(("{ten}", recipient))
-        } else if rest.starts_with("{gio}") {
-            Some(("{gio}", time))
-        } else if rest.starts_with("{ngay}") {
-            Some(("{ngay}", date))
-        } else {
-            None
-        };
-        if let Some((token, value)) = replacement {
-            result.push_str(value);
-            rest = &rest[token.len()..];
-        } else if let Some(ch) = rest.chars().next() {
-            result.push(ch);
-            rest = &rest[ch.len_utf8()..];
-        }
-    }
-    result
+    ctdozlite_core::expand_local_variables(content, recipient, time, date)
 }
 
 /// Move the keyboard selection within the current result bounds.

@@ -74,4 +74,46 @@ mod tests {
             None
         );
     }
+
+    #[test]
+    fn variables_expand_once_and_preserve_unknown_unicode() {
+        assert_eq!(
+            expand_local_variables(
+                "Chào {ten} {gio} {ngay} {khac}",
+                "An {gio}",
+                "08:30",
+                "22/11/2026"
+            ),
+            "Chào An {gio} 08:30 22/11/2026 {khac}"
+        );
+        assert_eq!(
+            expand_local_variables("{ten}{ten}ế{{gio}", "", "09:00", ""),
+            "ế{09:00"
+        );
+    }
+}
+
+/// Expand supported placeholders once; replacement values are never interpreted again.
+pub fn expand_local_variables(content: &str, recipient: &str, time: &str, date: &str) -> String {
+    let mut result = String::with_capacity(content.len() + recipient.len());
+    let mut rest = content;
+    while !rest.is_empty() {
+        let replacement = if rest.starts_with("{ten}") {
+            Some(("{ten}", recipient))
+        } else if rest.starts_with("{gio}") {
+            Some(("{gio}", time))
+        } else if rest.starts_with("{ngay}") {
+            Some(("{ngay}", date))
+        } else {
+            None
+        };
+        if let Some((token, value)) = replacement {
+            result.push_str(value);
+            rest = &rest[token.len()..];
+        } else if let Some(ch) = rest.chars().next() {
+            result.push(ch);
+            rest = &rest[ch.len_utf8()..];
+        }
+    }
+    result
 }

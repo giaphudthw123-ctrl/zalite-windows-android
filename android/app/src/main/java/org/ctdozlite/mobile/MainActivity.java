@@ -43,6 +43,7 @@ public final class MainActivity extends Activity {
     static { System.loadLibrary("ctdozlite_android"); }
     private native long nativeGifDimensions(byte[] bytes);
     private native String nativeNormalizeTemplate(String input);
+    private native String nativeExpandTemplate(String input, String recipient, String time, String date);
 
     private final ArrayList<String> templates = new ArrayList<>();
     private LinearLayout galleryList;
@@ -322,7 +323,7 @@ public final class MainActivity extends Activity {
             LinearLayout row = new LinearLayout(this);
             Button insert = new Button(this);
             insert.setText(templates.get(i));
-            insert.setOnClickListener(v -> draft.append((draft.length() == 0 ? "" : " ") + templates.get(position)));
+            insert.setOnClickListener(v -> previewTemplate(templates.get(position)));
             row.addView(insert, new LinearLayout.LayoutParams(0, -2, 1));
             Button edit = new Button(this);
             edit.setText("Sửa");
@@ -338,6 +339,33 @@ public final class MainActivity extends Activity {
             row.addView(remove);
             templateList.addView(row);
         }
+    }
+
+    private void previewTemplate(String template) {
+        EditText recipient = new EditText(this);
+        recipient.setSingleLine(true);
+        recipient.setHint("Tên người nhận để thay {ten}");
+        new AlertDialog.Builder(this).setTitle("Chuẩn bị mẫu tin")
+            .setMessage("Hỗ trợ {ten}, {gio}, {ngay}. Tên chỉ dùng trong bản nháp cục bộ.")
+            .setView(recipient).setNegativeButton("Hủy", null)
+            .setPositiveButton("Xem trước", (dialog, which) -> {
+                String name = recipient.getText().toString().trim();
+                if (name.isEmpty()) name = "bạn";
+                if (name.codePointCount(0, name.length()) > 160) {
+                    status.setText("Tên người nhận quá dài."); return;
+                }
+                java.util.Date now = new java.util.Date();
+                String time = new java.text.SimpleDateFormat("HH:mm", Locale.ROOT).format(now);
+                String date = new java.text.SimpleDateFormat("dd/MM/yyyy", Locale.ROOT).format(now);
+                String text = nativeExpandTemplate(template, name, time, date);
+                if (text == null) { status.setText("Không tạo được bản xem trước."); return; }
+                new AlertDialog.Builder(this).setTitle("Xem trước • " + name)
+                    .setMessage(text).setNegativeButton("Hủy", null)
+                    .setPositiveButton("Chèn vào bản nháp", (confirm, choice) -> {
+                        draft.append((draft.length() == 0 ? "" : "\n") + text);
+                        status.setText("Đã chèn mẫu. Bản thử chưa gửi tin qua Zalo.");
+                    }).show();
+            }).show();
     }
 
     private void editTemplate(int position) {

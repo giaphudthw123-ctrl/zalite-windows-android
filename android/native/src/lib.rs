@@ -5,6 +5,33 @@ use jni::sys::{jlong, jstring};
 use jni::JNIEnv;
 
 #[no_mangle]
+pub extern "system" fn Java_org_ctdozlite_mobile_MainActivity_nativeExpandTemplate(
+    mut env: JNIEnv,
+    _receiver: JObject,
+    input: JString,
+    recipient: JString,
+    time: JString,
+    date: JString,
+) -> jstring {
+    let mut values = Vec::new();
+    for value in [&input, &recipient, &time, &date] {
+        let Ok(text) = env.get_string(value) else {
+            return std::ptr::null_mut();
+        };
+        let text = text.to_string_lossy().into_owned();
+        if text.len() > 4096 {
+            return std::ptr::null_mut();
+        }
+        values.push(text);
+    }
+    let expanded =
+        ctdozlite_core::expand_local_variables(&values[0], &values[1], &values[2], &values[3]);
+    env.new_string(expanded)
+        .map(|text| text.into_raw())
+        .unwrap_or(std::ptr::null_mut())
+}
+
+#[no_mangle]
 pub extern "system" fn Java_org_ctdozlite_mobile_MainActivity_nativeGifDimensions(
     env: JNIEnv,
     _receiver: JObject,
