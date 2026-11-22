@@ -1,5 +1,7 @@
 # Android local prototype
 
+Version 0.4 replaces the default tool page with a mobile navigation shell: blue search header, Messages/Contacts/Discover/Timeline/Profile tabs, local draft screen, and tools reached from the shell. This is an initial layout correction, not Zalo login/chat support or a complete visual match. The personal GIF index now supports name/tag search, favorites, 12-row pagination, editing metadata and confirmed deletion. Selection rules have three JVM tests; full UI management flows remain only partially tested. See `../docs/verification/2026-11-22-android-shell.md`.
+
 This is a separate Android UI that links the portable Rust core through JNI. It is a local-only prototype for importing/viewing personal GIFs, receiving GIFs through Android's share sheet, and creating, editing, searching and inserting up to 100 quick message templates. It does not log in to Zalo or send messages, and it is not a replacement for the desktop GUI. The share sheet accepts saved `image/gif` content only; video, WebP and links from other apps are not accepted yet.
 
 Version 0.2 adds recipient-name entry and a preview/confirm step before inserting a template into the local draft. `{ten}`, `{gio}` and `{ngay}` use the same one-pass Rust expansion as Windows, so replacement values are never expanded recursively. Both APK variants were rebuilt and installed on the test emulator; the complete preview/insert flow was exercised on the internal variant. See `../docs/verification/2026-11-22-android-template-preview.md`.

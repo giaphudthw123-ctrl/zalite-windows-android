@@ -52,11 +52,18 @@ public final class MainActivity extends Activity {
     private EditText draft;
     private EditText templateSearch;
     private TextView status;
+    private EditText gifSearch;
+    private final ArrayList<GifGallery.Entry> galleryEntries = new ArrayList<>();
+    private boolean favoritesOnly;
+    private int galleryPage, galleryGeneration, previewGeneration;
+    private ScrollView toolsScreen;
+    private MobileShell mobileShell;
 
     @Override public void onCreate(Bundle state) {
         super.onCreate(state);
         loadTemplates();
         ScrollView scroll = new ScrollView(this);
+        toolsScreen = scroll;
         LinearLayout content = new LinearLayout(this);
         content.setOrientation(LinearLayout.VERTICAL);
         content.setPadding(24, 24, 24, 24);
@@ -67,6 +74,10 @@ public final class MainActivity extends Activity {
         title.setText(getString(R.string.app_name) + " • bản thử Android");
         title.setTextSize(22);
         content.addView(title);
+        Button backToMessages = new Button(this);
+        backToMessages.setText("‹ Về Tin nhắn");
+        backToMessages.setOnClickListener(v -> mobileShell.show());
+        content.addView(backToMessages);
         TextView notice = new TextView(this);
         notice.setText("GIF và mẫu tin được lưu trên máy này. Bản thử chưa kết nối hoặc gửi tin qua Zalo.");
         content.addView(notice);
@@ -92,6 +103,23 @@ public final class MainActivity extends Activity {
             startActivityForResult(pick, PICK_GIF);
         });
         content.addView(importGif);
+        gifSearch = new EditText(this);
+        gifSearch.setSingleLine(true);
+        gifSearch.setHint("Tìm GIF theo tên hoặc thẻ");
+        gifSearch.addTextChangedListener(new TextWatcher() {
+            public void beforeTextChanged(CharSequence s, int start, int count, int after) { }
+            public void onTextChanged(CharSequence s, int start, int before, int count) { galleryPage = 0; renderGalleryRows(); }
+            public void afterTextChanged(Editable text) { }
+        });
+        content.addView(gifSearch);
+        Button favorites = new Button(this);
+        favorites.setText("Chỉ hiện yêu thích: Tắt");
+        favorites.setOnClickListener(v -> {
+            favoritesOnly = !favoritesOnly; galleryPage = 0;
+            favorites.setText("Chỉ hiện yêu thích: " + (favoritesOnly ? "Bật" : "Tắt"));
+            renderGalleryRows();
+        });
+        content.addView(favorites);
         gifPreview = new ImageView(this);
         gifPreview.setAdjustViewBounds(true);
         gifPreview.setMaxHeight(400);
@@ -126,6 +154,8 @@ public final class MainActivity extends Activity {
         content.addView(templateList);
         renderGallery();
         renderTemplates();
+        mobileShell = new MobileShell(this, () -> setContentView(toolsScreen));
+        mobileShell.show();
         handleSharedGif(getIntent());
     }
 
@@ -137,6 +167,7 @@ public final class MainActivity extends Activity {
 
     private void handleSharedGif(Intent intent) {
         if (intent == null || !Intent.ACTION_SEND.equals(intent.getAction())) return;
+        setContentView(toolsScreen);
         if (!"image/gif".equalsIgnoreCase(intent.getType())) {
             status.setText("Chỉ hỗ trợ nhận tệp GIF đã lưu.");
             return;
@@ -201,27 +232,52 @@ public final class MainActivity extends Activity {
     }
 
     private void renderGallery() {
+        final int generation = ++galleryGeneration;
+        new Thread(() -> {
+            ArrayList<GifGallery.Entry> entries = new ArrayList<>();
+            File dir = new File(getFilesDir(), "personal_gifs");
+            File[] files = dir.listFiles((parent, name) -> name.matches("[0-9a-f]{64}\\.gif"));
+            if (files != null) for (File file : files) {
+                String id = file.getName().substring(0, 64);
+                entries.add(new GifGallery.Entry(id,
+                    getPreferences(MODE_PRIVATE).getString("gif_" + id, "GIF " + id.substring(0, 8)),
+                    getPreferences(MODE_PRIVATE).getString("gif_tags_" + id, ""),
+                    getPreferences(MODE_PRIVATE).getBoolean("gif_fav_" + id, false)));
+            }
+            runOnUiThread(() -> {
+                if (generation != galleryGeneration || isFinishing() || isDestroyed()) return;
+                galleryEntries.clear(); galleryEntries.addAll(entries); renderGalleryRows();
+            });
+        }, "gif-gallery-index").start();
+    }
+
+    private void renderGalleryRows() {
+        if (galleryList == null) return;
         galleryList.removeAllViews();
-        File dir = new File(getFilesDir(), "personal_gifs");
-        File[] items = dir.listFiles((parent, name) -> name.matches("[0-9a-f]{64}\\.gif"));
-        if (items == null || items.length == 0) {
+        java.util.List<GifGallery.Entry> selected = GifGallery.filter(galleryEntries, gifSearch.getText().toString(), favoritesOnly);
+        galleryPage = Math.min(galleryPage, GifGallery.pageCount(selected.size()) - 1);
+        if (selected.isEmpty()) {
             TextView empty = new TextView(this);
-            empty.setText("Chưa có GIF trong thư viện.");
+            empty.setText("Không có GIF phù hợp.");
             galleryList.addView(empty);
             return;
         }
-        for (int index = 0; index < Math.min(items.length, 24); index++) {
-            File file = items[index];
-            String id = file.getName().substring(0, 64);
-            String name = getPreferences(MODE_PRIVATE).getString("gif_" + id, "GIF " + id.substring(0, 8));
+        TextView count = new TextView(this);
+        count.setText(selected.size() + " GIF • Trang " + (galleryPage + 1) + "/" + GifGallery.pageCount(selected.size()));
+        galleryList.addView(count);
+        for (GifGallery.Entry entry : GifGallery.page(selected, galleryPage)) {
+            File file = new File(new File(getFilesDir(), "personal_gifs"), entry.id + ".gif");
+            String name = entry.name;
             Button button = new Button(this);
-            button.setText(name);
+            button.setText((entry.favorite ? "★ " : "") + name);
             button.setOnClickListener(v -> {
+                final int generation = ++previewGeneration;
                 status.setText("Đang mở GIF…");
                 new Thread(() -> {
                     try {
                         Drawable preview = ImageDecoder.decodeDrawable(ImageDecoder.createSource(file));
                         runOnUiThread(() -> {
+                            if (generation != previewGeneration || isFinishing() || isDestroyed()) return;
                             showPreview(preview);
                             status.setText("Xem trước " + name + " • chưa gửi qua Zalo");
                         });
@@ -231,12 +287,42 @@ public final class MainActivity extends Activity {
                 }, "gif-preview").start();
             });
             galleryList.addView(button);
+            Button manage = new Button(this);
+            manage.setText("Tên, thẻ, yêu thích hoặc xóa");
+            manage.setOnClickListener(v -> manageGif(entry, file));
+            galleryList.addView(manage);
         }
-        if (items.length > 24) {
-            TextView more = new TextView(this);
-            more.setText("Hiện 24/" + items.length + " GIF; tìm kiếm và phân trang đang phát triển.");
-            galleryList.addView(more);
-        }
+        LinearLayout pages = new LinearLayout(this);
+        Button previous = new Button(this); previous.setText("Trang trước"); previous.setEnabled(galleryPage > 0);
+        previous.setOnClickListener(v -> { galleryPage--; renderGalleryRows(); }); pages.addView(previous);
+        Button next = new Button(this); next.setText("Trang sau"); next.setEnabled(galleryPage + 1 < GifGallery.pageCount(selected.size()));
+        next.setOnClickListener(v -> { galleryPage++; renderGalleryRows(); }); pages.addView(next); galleryList.addView(pages);
+    }
+
+    private void manageGif(GifGallery.Entry entry, File file) {
+        new AlertDialog.Builder(this).setTitle(entry.name)
+            .setItems(new String[]{"Sửa tên và thẻ", entry.favorite ? "Bỏ yêu thích" : "Thêm yêu thích", "Xóa GIF"}, (dialog, action) -> {
+                if (action == 0) {
+                    LinearLayout form = new LinearLayout(this); form.setOrientation(LinearLayout.VERTICAL);
+                    EditText name = new EditText(this); name.setSingleLine(true); name.setText(entry.name); form.addView(name);
+                    EditText tags = new EditText(this); tags.setSingleLine(true); tags.setHint("Thẻ: vui, mèo, chào hỏi…"); tags.setText(entry.tags); form.addView(tags);
+                    new AlertDialog.Builder(this).setTitle("Tên và thẻ GIF").setView(form).setNegativeButton("Hủy", null)
+                        .setPositiveButton("Lưu", (d, which) -> {
+                            String label = name.getText().toString().trim(), keywords = tags.getText().toString().trim();
+                            if (label.isEmpty() || label.length() > 160 || keywords.length() > 300) { status.setText("Tên cần 1–160 ký tự; thẻ tối đa 300 ký tự."); return; }
+                            getPreferences(MODE_PRIVATE).edit().putString("gif_" + entry.id, label).putString("gif_tags_" + entry.id, keywords).apply(); renderGallery();
+                        }).show();
+                } else if (action == 1) {
+                    getPreferences(MODE_PRIVATE).edit().putBoolean("gif_fav_" + entry.id, !entry.favorite).apply(); renderGallery();
+                } else {
+                    new AlertDialog.Builder(this).setTitle("Xóa GIF khỏi máy?").setMessage(entry.name)
+                        .setNegativeButton("Hủy", null).setPositiveButton("Xóa", (d, which) -> new Thread(() -> {
+                            boolean deleted = !file.exists() || file.delete();
+                            if (deleted) getPreferences(MODE_PRIVATE).edit().remove("gif_" + entry.id).remove("gif_tags_" + entry.id).remove("gif_fav_" + entry.id).apply();
+                            runOnUiThread(() -> { if (deleted) { previewGeneration++; gifPreview.setImageDrawable(null); renderGallery(); } status.setText(deleted ? "Đã xóa GIF cục bộ." : "Không xóa được GIF."); });
+                        }, "gif-delete").start()).show();
+                }
+            }).show();
     }
 
     private void checkUpdate(Button button) {
