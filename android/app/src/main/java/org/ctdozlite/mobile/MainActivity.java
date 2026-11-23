@@ -35,7 +35,7 @@ import java.util.Arrays;
 import java.util.Locale;
 
 /** Android prototype with explicit companion authentication and local tools. */
-public final class MainActivity extends Activity {
+public final class MainActivity extends Activity implements MobileShell.SendActions {
     private static final int PICK_GIF = 14;
     private static final int MAX_GIF_BYTES = 8 * 1024 * 1024;
     private static final int MAX_TEMPLATES = 100;
@@ -54,6 +54,12 @@ public final class MainActivity extends Activity {
     private native boolean nativeAuthIsSession(long generation);
     private native String nativeRecentConversations();
     private native void nativeRecentCancel();
+    private native String nativePrepareSend(String account,String target,boolean group,String text);
+    private native String nativeConfirmSend(long ticket);
+    private native void nativeCancelSendPreview(long ticket);
+    private native String nativeSendStatus(String account,String target,boolean group);
+    private AlertDialog sendConfirmation;
+    private boolean sendPreparing;
     private boolean recentLoading;
     private boolean sessionSaving;
     private final UiLifecycle uiLifecycle = new UiLifecycle();
@@ -170,7 +176,7 @@ public final class MainActivity extends Activity {
         content.addView(templateList);
         renderGallery();
         renderTemplates();
-        mobileShell = new MobileShell(this, () -> setContentView(toolsScreen), this::showLogin, this::loadRecent);
+        mobileShell = new MobileShell(this, () -> setContentView(toolsScreen), this::showLogin, this::loadRecent,this);
         mobileShell.show();
         handleSharedGif(getIntent());
     }
@@ -182,6 +188,7 @@ public final class MainActivity extends Activity {
     }
     @Override protected void onStop() {
         uiLifecycle.stop();
+        if(sendConfirmation!=null)sendConfirmation.cancel();
         nativeRecentCancel();
         recentLoading=false;
         mobileShell.setRecentLoading(false);
@@ -241,6 +248,45 @@ public final class MainActivity extends Activity {
                 }catch(Exception error){Toast.makeText(this,"Không đọc được danh sách hội thoại.",Toast.LENGTH_LONG).show();}
             });
         },"recent-conversations").start();
+    }
+
+    private static org.json.JSONObject sendResult(String phase,String message) {
+        org.json.JSONObject value=new org.json.JSONObject();
+        try{value.put("phase",phase);if(message!=null)value.put("message",message);}catch(org.json.JSONException error){throw new IllegalStateException(error);}
+        return value;
+    }
+    @Override public void status(String account,String target,boolean group,java.util.function.Consumer<org.json.JSONObject> done) {
+        try{done.accept(new org.json.JSONObject(nativeSendStatus(account,target,group)));}
+        catch(Exception error){done.accept(sendResult("error","Không đọc được trạng thái lượt gửi."));}
+    }
+    @Override public void request(String account,String target,boolean group,String name,String text,java.util.function.Consumer<org.json.JSONObject> done) {
+        if(sendPreparing){done.accept(sendResult("error","Đang xử lý lượt gửi trước."));return;}
+        sendPreparing=true;final long uiTicket=uiLifecycle.ticket();
+        new Thread(()->{
+            org.json.JSONObject parsed;
+            try{parsed=new org.json.JSONObject(nativePrepareSend(account,target,group,text));}catch(Exception error){parsed=sendResult("error","Không chuẩn bị được lượt gửi.");}
+            final org.json.JSONObject prepared=parsed;
+            runOnUiThread(()->{
+                long ticket=prepared.optLong("ticket");
+                if(!uiLifecycle.accepts(uiTicket)||isFinishing()||isDestroyed()){if(ticket!=0)nativeCancelSendPreview(ticket);sendPreparing=false;return;}
+                if(!prepared.optString("phase").equals("prepared")||ticket==0){sendPreparing=false;done.accept(prepared);return;}
+                sendConfirmation=new AlertDialog.Builder(this).setTitle("Xác nhận gửi thử nghiệm")
+                    .setMessage("Từ tài khoản: "+account+"\nĐến: "+SendStatus.previewName(name)+"\nMã "+(group?"nhóm: ":"liên hệ: ")+target+"\n\n"+text+"\n\nLuồng Android chưa được kiểm chứng với tài khoản thật. Nếu mất phản hồi, không tự gửi lại; hãy kiểm tra lịch sử trước.")
+                    .setNegativeButton("Hủy",(dialog,which)->{nativeCancelSendPreview(ticket);sendPreparing=false;done.accept(sendResult("cancelled",null));})
+                    .setOnCancelListener(dialog->{nativeCancelSendPreview(ticket);sendPreparing=false;done.accept(sendResult("cancelled",null));})
+                    .setPositiveButton("Gửi một lần",(dialog,which)->{
+                        if(!uiLifecycle.accepts(uiTicket)){nativeCancelSendPreview(ticket);sendPreparing=false;done.accept(sendResult("cancelled",null));return;}
+                        new Thread(()->{
+                            org.json.JSONObject result;
+                            try{result=new org.json.JSONObject(nativeConfirmSend(ticket));}catch(Exception error){result=sendResult("unknown",null);}
+                            final org.json.JSONObject receipt=result;
+                            runOnUiThread(()->{sendPreparing=false;if(uiLifecycle.accepts(uiTicket)&&!isFinishing()&&!isDestroyed())done.accept(receipt);});
+                        },"confirmed-text-send").start();
+                    }).create();
+                sendConfirmation.setOnDismissListener(dialog->sendConfirmation=null);
+                sendConfirmation.show();
+            });
+        },"prepare-text-send").start();
     }
     private void showLogin() {
         if(sessionSaving){Toast.makeText(this,"Đang bảo vệ phiên. Vui lòng chờ lưu xong.",Toast.LENGTH_SHORT).show();return;}

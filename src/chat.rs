@@ -1410,22 +1410,7 @@ pub(crate) fn pick_str(v: &Value, keys: &[&str]) -> Option<String> {
 
 /// Allocate a millisecond-shaped request ID once per send, including simultaneous sends.
 pub(crate) fn next_client_message_id() -> u64 {
-    use std::sync::atomic::{AtomicU64, Ordering};
-    static LAST_ID: AtomicU64 = AtomicU64::new(0);
-    let now = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|duration| duration.as_millis() as u64)
-        .unwrap_or(0);
-    // CAS loop instead of `fetch_update`/`try_update`: the latter was renamed in recent Rust, and
-    // this crate still supports Rust 1.75.
-    let mut previous = LAST_ID.load(Ordering::Relaxed);
-    loop {
-        let next = now.max(previous.saturating_add(1));
-        match LAST_ID.compare_exchange_weak(previous, next, Ordering::Relaxed, Ordering::Relaxed) {
-            Ok(_) => return next,
-            Err(actual) => previous = actual,
-        }
-    }
+    crate::text_transport::next_client_message_id()
 }
 
 /// Convert inline Markdown (`**bold**`, `__underline__`, `~~strikethrough~~`, `*italic*`) and
@@ -1608,41 +1593,8 @@ pub(crate) async fn send_message_with_client_id(
     if s.login.is_none() {
         anyhow::bail!("chưa đăng nhập");
     }
-    let (clean_text, text_props_opt) = extract_zalo_rtf_text_properties(text);
-    let mut body = obj(&[
-        ("toid", json!(to_id)),
-        ("message", json!(clean_text)),
-        ("clientId", json!(now)),
-        ("imei", json!(s.imei)),
-    ]);
-    if let (Some(tp), Some(map)) = (text_props_opt, body.as_object_mut()) {
-        map.insert("textProperties".into(), json!(tp));
-    }
-    let params = s.encoded_params(&body)?;
-
-    let host = if s.domains.chat.contains("-msg-chat.")
-        || s.domains.chat.contains("tt-chat2-wpa")
-        || s.domains.chat.is_empty()
-    {
-        "https://tt-chat3-wpa.api.zaloapp.com"
-    } else {
-        &s.domains.chat
-    };
-
-    let url = format!("{host}/api/message/sms?{}", s.common_params());
-    let form = format!("params={params}");
-    let resp = s.post_form(&url, form).await?;
-    let resp = s.maybe_decrypt(resp, s.session_key_bytes()).await;
-    if let Some(code) = resp.get("error_code").and_then(Value::as_i64) {
-        if code != 0 {
-            let msg = resp
-                .get("error_message")
-                .and_then(Value::as_str)
-                .unwrap_or("unknown");
-            return Err(crate::session::SessionError::new(code, msg).into());
-        }
-    }
-    Ok(resp)
+    let (clean_text, properties) = extract_zalo_rtf_text_properties(text);
+    crate::text_transport::send_text(s, to_id, false, &clean_text, properties.as_deref(), now).await
 }
 
 /// Send a group text message: `POST {domains.group}/api/group/sendmsg?{common}`
@@ -1660,40 +1612,8 @@ pub(crate) async fn send_group_message_with_client_id(
     if s.login.is_none() {
         anyhow::bail!("chưa đăng nhập");
     }
-    let clean_grid = grid
-        .trim_start_matches("group_")
-        .trim_start_matches('g')
-        .trim_start_matches('G');
-    let (clean_text, text_props_opt) = extract_zalo_rtf_text_properties(text);
-    let mut body = obj(&[
-        ("grid", json!(clean_grid)),
-        ("message", json!(clean_text)),
-        ("clientId", json!(now)),
-        ("imei", json!(s.imei)),
-        ("visibility", json!(0)),
-    ]);
-    if let (Some(tp), Some(map)) = (text_props_opt, body.as_object_mut()) {
-        map.insert("textProperties".into(), json!(tp));
-    }
-    let params = s.encoded_params(&body)?;
-    let url = format!(
-        "{}/api/group/sendmsg?{}",
-        s.domains.group,
-        s.common_params()
-    );
-    let form = format!("params={params}");
-    let resp = s.post_form(&url, form).await?;
-    let resp = s.maybe_decrypt(resp, s.session_key_bytes()).await;
-    if let Some(code) = resp.get("error_code").and_then(Value::as_i64) {
-        if code != 0 {
-            let msg = resp
-                .get("error_message")
-                .and_then(Value::as_str)
-                .unwrap_or("unknown");
-            return Err(crate::session::SessionError::new(code, msg).into());
-        }
-    }
-    Ok(resp)
+    let (clean_text, properties) = extract_zalo_rtf_text_properties(text);
+    crate::text_transport::send_text(s, grid, true, &clean_text, properties.as_deref(), now).await
 }
 
 /// A member tagged from the composer: `uid` (`"-1"` for @All) and the display name inserted

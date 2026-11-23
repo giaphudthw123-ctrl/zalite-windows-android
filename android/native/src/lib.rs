@@ -4,6 +4,76 @@ use jni::objects::{JByteArray, JObject, JString};
 use jni::sys::{jlong, jstring};
 use jni::JNIEnv;
 mod auth;
+mod sending;
+
+fn bounded_string(env: &mut JNIEnv, input: &JString, limit: usize) -> Option<String> {
+    let value = env.get_string(input).ok()?;
+    if value.to_bytes().len() > limit {
+        return None;
+    }
+    Some(value.to_string_lossy().into_owned())
+}
+
+#[no_mangle]
+pub extern "system" fn Java_org_ctdozlite_mobile_MainActivity_nativePrepareSend(
+    mut env: JNIEnv,
+    _this: JObject,
+    account: JString,
+    target: JString,
+    group: jni::sys::jboolean,
+    text: JString,
+) -> jstring {
+    let response = match (
+        bounded_string(&mut env, &account, 64),
+        bounded_string(&mut env, &target, 80),
+        bounded_string(&mut env, &text, 24000),
+    ) {
+        (Some(account), Some(target), Some(text)) => {
+            sending::prepare(&account, &target, group != 0, &text)
+        }
+        _ => serde_json::json!({"phase":"error","message":"Dữ liệu gửi không hợp lệ."}),
+    };
+    env.new_string(response.to_string())
+        .map(|s| s.into_raw())
+        .unwrap_or(std::ptr::null_mut())
+}
+#[no_mangle]
+pub extern "system" fn Java_org_ctdozlite_mobile_MainActivity_nativeConfirmSend(
+    env: JNIEnv,
+    _this: JObject,
+    id: jlong,
+) -> jstring {
+    env.new_string(sending::confirm(id as u64).to_string())
+        .map(|s| s.into_raw())
+        .unwrap_or(std::ptr::null_mut())
+}
+#[no_mangle]
+pub extern "system" fn Java_org_ctdozlite_mobile_MainActivity_nativeCancelSendPreview(
+    _env: JNIEnv,
+    _this: JObject,
+    id: jlong,
+) {
+    sending::cancel(id as u64);
+}
+#[no_mangle]
+pub extern "system" fn Java_org_ctdozlite_mobile_MainActivity_nativeSendStatus(
+    mut env: JNIEnv,
+    _this: JObject,
+    account: JString,
+    target: JString,
+    group: jni::sys::jboolean,
+) -> jstring {
+    let response = match (
+        bounded_string(&mut env, &account, 64),
+        bounded_string(&mut env, &target, 80),
+    ) {
+        (Some(account), Some(target)) => sending::status(&account, &target, group != 0),
+        _ => serde_json::json!({"phase":"error","message":"Dữ liệu hội thoại không hợp lệ."}),
+    };
+    env.new_string(response.to_string())
+        .map(|s| s.into_raw())
+        .unwrap_or(std::ptr::null_mut())
+}
 
 #[no_mangle]
 pub extern "system" fn Java_org_ctdozlite_mobile_MainActivity_nativeRecentConversations(

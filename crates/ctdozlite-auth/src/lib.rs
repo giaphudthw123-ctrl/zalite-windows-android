@@ -12,6 +12,7 @@ pub mod endpoints;
 pub mod logger;
 #[path = "../../../src/login.rs"]
 pub mod login;
+pub mod outgoing;
 #[path = "../../../src/param_cipher.rs"]
 pub mod param_cipher;
 #[path = "../../../src/protocol_identity.rs"]
@@ -23,3 +24,7 @@ pub mod recent;
 pub mod session;
 #[path = "../../../src/session_storage.rs"]
 pub mod session_storage;
+#[cfg(test)]
+mod text_contract;
+#[path = "../../../src/text_transport.rs"]
+pub mod text_transport;

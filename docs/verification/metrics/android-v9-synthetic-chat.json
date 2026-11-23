@@ -1,0 +1,22 @@
+{
+  "date": "2026-11-23",
+  "environment": {"device": "emulator-5554", "android_release": "16", "api": 36, "abi": "x86_64", "screen_pixels": [320,640]},
+  "package": "org.ctdozlite.mobile.internal",
+  "version_code": 9,
+  "apk_bytes": 14794805,
+  "apk_sha256": "78BC683FEF23D3A14B92E9D2FB502762E731683F70ADF0BB41ADFEDC655148D7",
+  "workload": "Three synthetic chat bubbles after a confirmed local-only sample message; no authenticated Session",
+  "foreground": {"pss_kib": 45876, "rss_kib": 176032},
+  "background": {
+    "pss_kib": 45929, "rss_kib": 177276,
+    "cpu_sample": {"process": 4907, "duration_seconds": 20.174, "clock_ticks_per_second": 100, "before_cpu_ticks": 695, "after_cpu_ticks": 696, "one_core_cpu_percent_rounded": 0.05}
+  },
+  "allocated_directory_kib": {"files": 24, "cache": 8, "no_backup_empty_directory": 8},
+  "network_bytes": null,
+  "limits": [
+    "Existing synthetic-test profile, not a fresh install or a matched before/after workload",
+    "No real Zalo account, external send, physical ARM64 device or official-client baseline",
+    "CPU uses process utime+stime at 10 ms resolution over one short background interval",
+    "Memory snapshots were collected separately from the CPU interval; allocated directory blocks are not total installed footprint"
+  ]
+}

@@ -35,6 +35,7 @@ pub mod session_storage;
 pub mod single_instance;
 pub mod socket;
 pub mod store;
+pub mod text_transport;
 pub mod tui;
 pub mod ui;
 pub mod unread;

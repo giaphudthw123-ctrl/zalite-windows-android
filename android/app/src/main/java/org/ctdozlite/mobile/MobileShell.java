@@ -9,6 +9,11 @@ import android.widget.*;
 
 /** Mobile navigation and local draft workspace. Never represents fixture chats as live data. */
 final class MobileShell {
+    interface SendActions {
+        void request(String account,String target,boolean group,String name,String text,java.util.function.Consumer<org.json.JSONObject> done);
+        void status(String account,String target,boolean group,java.util.function.Consumer<org.json.JSONObject> done);
+    }
+    private final SendActions sends;
     private final Activity activity;
     private final Runnable tools;
     private final Runnable login;
@@ -18,6 +23,7 @@ final class MobileShell {
     private final java.util.Map<String,String> drafts=new java.util.HashMap<>();
     private String conversationAccount="";
     private String searchQuery="";
+    private String activeConversationKey="";
     void clearRecent(){conversations=new org.json.JSONArray();drafts.clear();demo=false;limited=false;conversationAccount="";searchQuery="";selected=0;if(root!=null)show();}
     void setRecentLoading(boolean loading) { recentLoading=loading;if(selected==0&&!inConversation&&body!=null)select(0); }
     void acceptRecent(org.json.JSONObject data,boolean isDemo) {
@@ -33,7 +39,7 @@ final class MobileShell {
     private String localSessionLabel = "Zalite • chưa kết nối tài khoản Zalo";
     private TextView connectionNote;
     void setLocalSessionLabel(String value) { localSessionLabel=value; if(connectionNote!=null)connectionNote.setText(value); }
-    MobileShell(Activity activity, Runnable tools, Runnable login,Runnable refresh) { this.activity = activity; this.tools = tools; this.login = login;this.refresh=refresh; }
+    MobileShell(Activity activity, Runnable tools, Runnable login,Runnable refresh,SendActions sends) { this.activity = activity; this.tools = tools; this.login = login;this.refresh=refresh;this.sends=sends; }
     private int dp(int n) { return Math.round(n * activity.getResources().getDisplayMetrics().density); }
     private TextView text(String value, int size, int color) {
         TextView view = new TextView(activity); view.setText(value); view.setTextSize(size); view.setTextColor(color); return view;
@@ -111,19 +117,40 @@ final class MobileShell {
     }
     private String time(long ts){return ts<=0?"":new java.text.SimpleDateFormat("HH:mm",java.util.Locale.ROOT).format(new java.util.Date(ts));}
     private void openConversation(org.json.JSONObject entry){
-        inConversation=true;root.removeAllViews();
+        inConversation=true;activeConversationKey=(entry.optBoolean("group")?"g:":"u:")+entry.optString("id");root.removeAllViews();
         LinearLayout header=new LinearLayout(activity);header.setGravity(Gravity.CENTER_VERTICAL);header.setPadding(dp(8),dp(8),dp(12),dp(8));header.setBackgroundColor(blue);
         Button back=new Button(activity);back.setText("‹");back.setOnClickListener(v->show());header.addView(back,new LinearLayout.LayoutParams(dp(48),dp(48)));
-        LinearLayout title=new LinearLayout(activity);title.setOrientation(LinearLayout.VERTICAL);title.addView(text(entry.optString("name"),18,Color.WHITE));title.addView(text(demo?"Dữ liệu thử • chưa gửi tin":"Tin gần đây đã tải • chưa bật gửi tin",11,0xffdbeaff));header.addView(title,new LinearLayout.LayoutParams(0,-2,1));root.addView(header);
+        LinearLayout title=new LinearLayout(activity);title.setOrientation(LinearLayout.VERTICAL);title.addView(text(entry.optString("name"),18,Color.WHITE));title.addView(text(demo?"Dữ liệu thử • không kết nối Zalo":"Gửi thử nghiệm • cần xác nhận mỗi tin",11,0xffdbeaff));header.addView(title,new LinearLayout.LayoutParams(0,-2,1));root.addView(header);
         ScrollView scroll=new ScrollView(activity);scroll.setBackgroundColor(0xffeaf0f6);LinearLayout messages=new LinearLayout(activity);messages.setOrientation(LinearLayout.VERTICAL);messages.setPadding(dp(12),dp(16),dp(12),dp(16));scroll.addView(messages);root.addView(scroll,new LinearLayout.LayoutParams(-1,0,1));
         org.json.JSONArray rows=entry.optJSONArray("messages");if(rows!=null)for(int i=0;i<rows.length();i++){
             org.json.JSONObject message=rows.optJSONObject(i);if(message==null)continue;boolean outgoing=message.optBoolean("outgoing");
             LinearLayout line=new LinearLayout(activity);line.setGravity(outgoing?Gravity.RIGHT:Gravity.LEFT);line.setPadding(0,0,0,dp(10));
             LinearLayout bubble=new LinearLayout(activity);bubble.setOrientation(LinearLayout.VERTICAL);bubble.setPadding(dp(12),dp(9),dp(12),dp(7));bubble.setBackground(background(outgoing?0xffd9eaff:Color.WHITE,12));
             TextView content=text(message.optString("text"),16,0xff172334);content.setMaxWidth(activity.getResources().getDisplayMetrics().widthPixels-dp(80));bubble.addView(content);bubble.addView(text(time(message.optLong("ts")),10,muted));line.addView(bubble);messages.addView(line);
+            if(message.has("send_state"))bubble.addView(text(SendStatus.describe(message.optString("send_state")),10,muted));
         }
-        LinearLayout toolbar=new LinearLayout(activity);Button gif=new Button(activity);gif.setText("GIF / Sticker");gif.setOnClickListener(v->tools.run());toolbar.addView(gif);Button quick=new Button(activity);quick.setText("Mẫu tin");quick.setOnClickListener(v->tools.run());toolbar.addView(quick);root.addView(toolbar);
-        String key=(entry.optBoolean("group")?"g:":"u:")+entry.optString("id");EditText input=new EditText(activity);input.setMinLines(2);input.setMaxLines(5);input.setHint("Soạn bản nháp • chưa bật gửi tin");input.setText(drafts.getOrDefault(key,""));root.addView(input);input.addTextChangedListener(new android.text.TextWatcher(){public void beforeTextChanged(CharSequence s,int st,int c,int a){}public void onTextChanged(CharSequence s,int st,int b,int c){drafts.put(key,s.toString());}public void afterTextChanged(android.text.Editable e){}});
+        scroll.post(()->scroll.fullScroll(android.view.View.FOCUS_DOWN));
+        LinearLayout toolbar=new LinearLayout(activity);Button gif=new Button(activity);gif.setText("GIF");gif.setAllCaps(false);gif.setContentDescription("Thư viện GIF và sticker cá nhân");gif.setOnClickListener(v->tools.run());toolbar.addView(gif,new LinearLayout.LayoutParams(0,dp(48),1));Button quick=new Button(activity);quick.setText("Mẫu tin");quick.setAllCaps(false);quick.setOnClickListener(v->tools.run());toolbar.addView(quick,new LinearLayout.LayoutParams(0,dp(48),1));root.addView(toolbar);
+        String key=(entry.optBoolean("group")?"g:":"u:")+entry.optString("id");
+        final boolean demoChat=demo;final String account=conversationAccount;
+        LinearLayout composer=new LinearLayout(activity);composer.setGravity(Gravity.CENTER_VERTICAL);
+        EditText input=new EditText(activity);input.setMinLines(2);input.setMaxLines(5);input.setFilters(new android.text.InputFilter[]{new android.text.InputFilter.LengthFilter(4000)});input.setHint(demoChat?"Nhập tin thử…":"Nhập tin nhắn…");input.setText(drafts.getOrDefault(key,""));composer.addView(input,new LinearLayout.LayoutParams(0,-2,1));
+        Button send=new Button(activity);send.setAllCaps(false);send.setText(demoChat?"Thử gửi":"Gửi");composer.addView(send,new LinearLayout.LayoutParams(dp(80),dp(48)));root.addView(composer);
+        TextView result=text(demoChat?SendStatus.describe("local_demo"):"Gửi thử nghiệm chưa được kiểm chứng bằng tài khoản thật",11,muted);result.setPadding(dp(12),dp(4),dp(12),dp(6));root.addView(result);
+        Button check=new Button(activity);check.setAllCaps(false);check.setText("Trạng thái");check.setContentDescription("Trạng thái lượt gửi");toolbar.addView(check,new LinearLayout.LayoutParams(0,dp(48),1));
+        check.setOnClickListener(v->{if(demoChat)result.setText(SendStatus.describe("local_demo"));else sends.status(account,entry.optString("id"),entry.optBoolean("group"),value->{String phase=value.optString("phase");result.setText(value.optString("message",SendStatus.describe(phase)));send.setEnabled(!phase.equals("sending"));if(SendStatus.canClearDraft(input.getText().toString(),value.optString("text"),phase)){drafts.remove(key);input.setText("");}});});
+        input.addTextChangedListener(new android.text.TextWatcher(){public void beforeTextChanged(CharSequence s,int st,int c,int a){}public void onTextChanged(CharSequence s,int st,int b,int c){drafts.put(key,s.toString());}public void afterTextChanged(android.text.Editable e){}});
+        send.setOnClickListener(v->{
+            String content=input.getText().toString();if(content.trim().isEmpty())return;send.setEnabled(false);
+            java.util.function.Consumer<org.json.JSONObject> completed=value->{
+                send.setEnabled(true);String phase=value.optString("phase");result.setText(value.optString("message",SendStatus.describe(phase)));
+                if((phase.equals("accepted")||phase.equals("local_demo"))&&demo==demoChat&&conversationAccount.equals(account)){
+                    try{org.json.JSONArray list=entry.optJSONArray("messages");if(list==null){list=new org.json.JSONArray();entry.put("messages",list);}long now=System.currentTimeMillis();list.put(new org.json.JSONObject().put("id",value.optString("ticket")).put("text",content).put("ts",now).put("outgoing",true).put("send_state",phase));while(list.length()>100){list.remove(0);limited=true;}entry.put("ts",now);if(input.getText().toString().equals(content)){drafts.remove(key);input.setText("");}if(inConversation&&activeConversationKey.equals(key))openConversation(entry);}catch(org.json.JSONException error){result.setText("Đã nhận kết quả nhưng không cập nhật được phần xem trước.");}
+                }
+            };
+            if(demoChat){new android.app.AlertDialog.Builder(activity).setTitle("Gửi trong bản xem thử").setMessage("Người nhận: "+SendStatus.previewName(entry.optString("name"))+"\n\n"+content+"\n\nChỉ thêm dữ liệu mẫu trên máy, không gửi qua Zalo.").setPositiveButton("Thêm tin thử",(dialog,which)->{org.json.JSONObject value=new org.json.JSONObject();try{value.put("phase","local_demo");}catch(org.json.JSONException error){throw new IllegalStateException(error);}completed.accept(value);}).setNegativeButton("Hủy",(dialog,which)->send.setEnabled(true)).setOnCancelListener(dialog->send.setEnabled(true)).show();}
+            else sends.request(account,entry.optString("id"),entry.optBoolean("group"),entry.optString("name"),content,completed);
+        });
     }
     private void loadExamples(){
         try{
