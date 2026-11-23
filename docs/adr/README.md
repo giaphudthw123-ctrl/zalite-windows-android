@@ -51,5 +51,6 @@ What we will do, in one paragraph, present tense.
 | [0014](0014-shared-text-send-intents.md) | Shared text transport and explicit mobile send intents | Prototype testing |
 | [0015](0015-android-composer-template-vault.md) | Active-composer templates and protected local library | Prototype testing |
 | [0016](0016-android-capture-protection.md) | Android Activity/dialog capture protection and local preference | Prototype testing |
+| [0017](0017-android-gif-composer-selection.md) | In-chat GIF selection and bounded content-addressed files | Prototype testing |
 
 Related domain language lives in [`/GLOSSARY.md`](../../GLOSSARY.md).

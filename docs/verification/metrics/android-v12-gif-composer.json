@@ -1,0 +1,17 @@
+{
+  "date": "2026-11-23T19:48:06.4694393+07:00",
+  "device": "emulator-5554 Android16 API36 x86_64 320x640",
+  "package": "org.ctdozlite.mobile.internal",
+  "versionCode": 12,
+  "foregroundPssKiB": 46724,
+  "foregroundRssKiB": 179396,
+  "filesKiB": 32,
+  "cacheKiB": 8,
+  "noBackupKiB": 24,
+  "fixtureGifBytes": 3551,
+  "fixtureGifSha256": "A16ACBE6759DE0F4D8B6B525830CC7AEB26E01FD44FE96BC9A07AF61C2496E46",
+  "sampleContext": "Sample conversation, GIF selected/removed, typed synthetic draft; two local GIFs and four templates.",
+  "cpu": null,
+  "networkBytes": null,
+  "limitations": "One emulator sample; no matched official-client baseline, physical-device, installed-size or new CPU/network measurement."
+}

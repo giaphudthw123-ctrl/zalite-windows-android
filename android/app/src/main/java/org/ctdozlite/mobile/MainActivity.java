@@ -26,10 +26,8 @@ import android.widget.Toast;
 import org.json.JSONArray;
 import java.io.ByteArrayOutputStream;
 import java.io.File;
-import java.io.FileOutputStream;
 import java.io.InputStream;
 import java.nio.ByteBuffer;
-import java.security.MessageDigest;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Locale;
@@ -37,7 +35,7 @@ import java.util.Locale;
 /** Android prototype with explicit companion authentication and local tools. */
 public final class MainActivity extends Activity implements MobileShell.SendActions {
     private static final int PICK_GIF = 14;
-    private static final int MAX_GIF_BYTES = 8 * 1024 * 1024;
+    private static final int MAX_GIF_BYTES = GifFiles.MAX_FILE_BYTES;
     private static final int MAX_TEMPLATES = 100;
 
     static { System.loadLibrary("ctdozlite_android"); }
@@ -85,9 +83,15 @@ public final class MainActivity extends Activity implements MobileShell.SendActi
     private EditText gifSearch;
     private final ArrayList<GifGallery.Entry> galleryEntries = new ArrayList<>();
     private boolean favoritesOnly;
-    private int galleryPage, galleryGeneration, previewGeneration;
+    private int galleryPage, galleryGeneration;
+    private volatile int previewGeneration;
     private ScrollView toolsScreen;
     private LinearLayout toolsRoot;
+    private static final java.util.concurrent.ExecutorService GIF_IO=java.util.concurrent.Executors.newSingleThreadExecutor();
+    private boolean galleryReady;
+    private String galleryProblem="";
+    private AlertDialog gifPickerDialog;
+    private Runnable refreshGifPicker;
     private MobileShell mobileShell;
     private View gifSection,templateSection,updateSection;
     private static final java.util.concurrent.ExecutorService PRIVACY_IO=java.util.concurrent.Executors.newSingleThreadExecutor();
@@ -210,7 +214,8 @@ public final class MainActivity extends Activity implements MobileShell.SendActi
     }
 
     private int pixels(int value){return Math.round(value*getResources().getDisplayMetrics().density);}
-    private void showTools(){setContentView(toolsRoot);toolsRoot.requestApplyInsets();}
+    private void showTools(){viewChanged();setContentView(toolsRoot);toolsRoot.requestApplyInsets();}
+    @Override public void viewChanged(){previewGeneration++;stopGif(gifPreview);if(gifPickerDialog!=null)gifPickerDialog.cancel();}
     private void openUtility(String section) {
         if(section.equals("privacy")){showPrivacy();return;}
         showTools();
@@ -218,6 +223,7 @@ public final class MainActivity extends Activity implements MobileShell.SendActi
         toolsScreen.post(()->toolsScreen.smoothScrollTo(0,target.getTop()));
     }
     private void showPrivacy() {
+        viewChanged();
         LinearLayout page=new LinearLayout(this);page.setOrientation(LinearLayout.VERTICAL);page.setBackgroundColor(0xfff3f5f8);
         page.setOnApplyWindowInsetsListener((view,insets)->{view.setPadding(insets.getSystemWindowInsetLeft(),insets.getSystemWindowInsetTop(),insets.getSystemWindowInsetRight(),insets.getSystemWindowInsetBottom());return insets;});
         TextView back=new TextView(this);back.setText("‹  Bảo mật và riêng tư");back.setTextSize(20);back.setTextColor(0xff172334);back.setPadding(pixels(16),pixels(18),pixels(16),pixels(18));back.setBackgroundColor(android.graphics.Color.WHITE);back.setOnClickListener(v->mobileShell.show());page.addView(back);
@@ -257,6 +263,7 @@ public final class MainActivity extends Activity implements MobileShell.SendActi
     }
     @Override protected void onStop() {
         uiLifecycle.stop();
+        previewGeneration++;stopGif(gifPreview);if(gifPickerDialog!=null)gifPickerDialog.cancel();
         for(AlertDialog dialog:new ArrayList<>(templateDialogs))dialog.cancel();
         if(sendConfirmation!=null)sendConfirmation.cancel();
         nativeRecentCancel();
@@ -439,7 +446,8 @@ public final class MainActivity extends Activity implements MobileShell.SendActi
             return;
         }
         status.setText("Đang kiểm tra và nhập GIF…");
-        new Thread(() -> {
+        final long importTicket=uiLifecycle.ticket();
+        GIF_IO.execute(() -> {
         try (InputStream input = getContentResolver().openInputStream(uri);
              ByteArrayOutputStream output = new ByteArrayOutputStream()) {
             if (input == null) throw new IllegalArgumentException("Không đọc được tệp");
@@ -450,59 +458,46 @@ public final class MainActivity extends Activity implements MobileShell.SendActi
                 output.write(buffer, 0, count);
             }
             byte[] bytes = output.toByteArray();
-            if (nativeGifDimensions(bytes) == 0) throw new IllegalArgumentException("GIF không hợp lệ");
-            Drawable preview = ImageDecoder.decodeDrawable(ImageDecoder.createSource(ByteBuffer.wrap(bytes)));
-            File dir = new File(getFilesDir(), "personal_gifs");
-            if (!dir.isDirectory() && !dir.mkdirs()) throw new IllegalArgumentException("Không tạo được thư viện");
-            String id = hex(MessageDigest.getInstance("SHA-256").digest(bytes));
-            File target = new File(dir, id + ".gif");
-            if (!target.exists() && dir.listFiles() != null && dir.listFiles().length >= 100) {
-                throw new IllegalArgumentException("Thư viện đã đủ 100 GIF");
-            }
-            if (!target.exists()) {
-                File temp = new File(dir, id + ".tmp");
-                try (FileOutputStream file = new FileOutputStream(temp)) {
-                    file.write(bytes);
-                    file.getFD().sync();
-                }
-                if (!temp.renameTo(target)) throw new IllegalArgumentException("Không lưu được GIF");
-            }
+            Drawable preview = decodeGif(bytes);
+            String id = gifFiles().put(bytes);
             String name = displayName(uri);
-            getPreferences(MODE_PRIVATE).edit().putString("gif_" + id, name).apply();
+            if(!getPreferences(MODE_PRIVATE).contains("gif_"+id))getPreferences(MODE_PRIVATE).edit().putString("gif_" + id, name).apply();
             runOnUiThread(() -> {
-                showPreview(preview);
+                if(isFinishing()||isDestroyed())return;
+                if(uiLifecycle.accepts(importTicket))showPreview(preview);
                 status.setText("Đã nhập " + name + " (" + bytes.length + " byte)");
                 renderGallery();
             });
         } catch (Exception error) {
-            runOnUiThread(() -> status.setText("Không nhập được GIF: " + error.getMessage()));
+            runOnUiThread(() -> {if(!isDestroyed())status.setText("Không nhập được GIF. Kiểm tra quyền đọc và định dạng; tối đa 8 MiB/tệp, 100 GIF hoặc 256 MiB cho thư viện.");});
         }
-        }, "gif-import").start();
+        });
     }
 
     private void renderGallery() {
         final int generation = ++galleryGeneration;
-        new Thread(() -> {
+        galleryReady=false;galleryProblem="";
+        GIF_IO.execute(() -> {
             ArrayList<GifGallery.Entry> entries = new ArrayList<>();
-            File dir = new File(getFilesDir(), "personal_gifs");
-            File[] files = dir.listFiles((parent, name) -> name.matches("[0-9a-f]{64}\\.gif"));
-            if (files != null) for (File file : files) {
-                String id = file.getName().substring(0, 64);
+            String problem="";
+            try {for (String id : gifFiles().ids()) {
                 entries.add(new GifGallery.Entry(id,
                     getPreferences(MODE_PRIVATE).getString("gif_" + id, "GIF " + id.substring(0, 8)),
                     getPreferences(MODE_PRIVATE).getString("gif_tags_" + id, ""),
                     getPreferences(MODE_PRIVATE).getBoolean("gif_fav_" + id, false)));
-            }
+            }}catch(Exception error){problem="Không mở được thư viện GIF. Tệp hiện có được giữ lại.";}
+            final String failure=problem;
             runOnUiThread(() -> {
                 if (generation != galleryGeneration || isFinishing() || isDestroyed()) return;
-                galleryEntries.clear(); galleryEntries.addAll(entries); renderGalleryRows();
+                galleryReady=failure.isEmpty();galleryProblem=failure;galleryEntries.clear();galleryEntries.addAll(entries);renderGalleryRows();if(refreshGifPicker!=null)refreshGifPicker.run();
             });
-        }, "gif-gallery-index").start();
+        });
     }
 
     private void renderGalleryRows() {
         if (galleryList == null) return;
         galleryList.removeAllViews();
+        if(!galleryReady){TextView note=new TextView(this);note.setText(galleryProblem.isEmpty()?"Đang mở thư viện GIF…":galleryProblem);galleryList.addView(note);return;}
         java.util.List<GifGallery.Entry> selected = GifGallery.filter(galleryEntries, gifSearch.getText().toString(), favoritesOnly);
         galleryPage = Math.min(galleryPage, GifGallery.pageCount(selected.size()) - 1);
         if (selected.isEmpty()) {
@@ -515,30 +510,30 @@ public final class MainActivity extends Activity implements MobileShell.SendActi
         count.setText(selected.size() + " GIF • Trang " + (galleryPage + 1) + "/" + GifGallery.pageCount(selected.size()));
         galleryList.addView(count);
         for (GifGallery.Entry entry : GifGallery.page(selected, galleryPage)) {
-            File file = new File(new File(getFilesDir(), "personal_gifs"), entry.id + ".gif");
             String name = entry.name;
             Button button = new Button(this);
             button.setText((entry.favorite ? "★ " : "") + name);
             button.setOnClickListener(v -> {
                 final int generation = ++previewGeneration;
                 status.setText("Đang mở GIF…");
-                new Thread(() -> {
+                GIF_IO.execute(() -> {
+                    if(generation!=previewGeneration)return;
                     try {
-                        Drawable preview = ImageDecoder.decodeDrawable(ImageDecoder.createSource(file));
+                        Drawable preview = decodeGif(gifFiles().read(entry.id));
                         runOnUiThread(() -> {
                             if (generation != previewGeneration || isFinishing() || isDestroyed()) return;
                             showPreview(preview);
                             status.setText("Xem trước " + name + " • chưa gửi qua Zalo");
                         });
                     } catch (Exception error) {
-                        runOnUiThread(() -> status.setText("Không xem được GIF"));
+                        runOnUiThread(() -> {if(generation==previewGeneration&&!isDestroyed())status.setText("Không xem được GIF: tệp thiếu, bị thay đổi hoặc không hợp lệ.");});
                     }
-                }, "gif-preview").start();
+                });
             });
             galleryList.addView(button);
             Button manage = new Button(this);
             manage.setText("Tên, thẻ, yêu thích hoặc xóa");
-            manage.setOnClickListener(v -> manageGif(entry, file));
+            manage.setOnClickListener(v -> manageGif(entry));
             galleryList.addView(manage);
         }
         LinearLayout pages = new LinearLayout(this);
@@ -548,7 +543,7 @@ public final class MainActivity extends Activity implements MobileShell.SendActi
         next.setOnClickListener(v -> { galleryPage++; renderGalleryRows(); }); pages.addView(next); galleryList.addView(pages);
     }
 
-    private void manageGif(GifGallery.Entry entry, File file) {
+    private void manageGif(GifGallery.Entry entry) {
         new CaptureProtection.Builder(this).setTitle(entry.name)
             .setItems(new String[]{"Sửa tên và thẻ", entry.favorite ? "Bỏ yêu thích" : "Thêm yêu thích", "Xóa GIF"}, (dialog, action) -> {
                 if (action == 0) {
@@ -565,11 +560,11 @@ public final class MainActivity extends Activity implements MobileShell.SendActi
                     getPreferences(MODE_PRIVATE).edit().putBoolean("gif_fav_" + entry.id, !entry.favorite).apply(); renderGallery();
                 } else {
                     new CaptureProtection.Builder(this).setTitle("Xóa GIF khỏi máy?").setMessage(entry.name)
-                        .setNegativeButton("Hủy", null).setPositiveButton("Xóa", (d, which) -> new Thread(() -> {
-                            boolean deleted = !file.exists() || file.delete();
+                        .setNegativeButton("Hủy", null).setPositiveButton("Xóa", (d, which) -> GIF_IO.execute(() -> {
+                            boolean removed=false;try{gifFiles().remove(entry.id);removed=true;}catch(Exception error){}final boolean deleted=removed;
                             if (deleted) getPreferences(MODE_PRIVATE).edit().remove("gif_" + entry.id).remove("gif_tags_" + entry.id).remove("gif_fav_" + entry.id).apply();
-                            runOnUiThread(() -> { if (deleted) { previewGeneration++; gifPreview.setImageDrawable(null); renderGallery(); } status.setText(deleted ? "Đã xóa GIF cục bộ." : "Không xóa được GIF."); });
-                        }, "gif-delete").start()).show();
+                            runOnUiThread(() -> { if (deleted) { previewGeneration++; stopGif(gifPreview); renderGallery(); } status.setText(deleted ? "Đã xóa GIF cục bộ." : "Không xóa được GIF."); });
+                        })).show();
                 }
             }).show();
     }
@@ -629,8 +624,51 @@ public final class MainActivity extends Activity implements MobileShell.SendActi
     }
 
     private void showPreview(Drawable drawable) {
+        stopGif(gifPreview);
         gifPreview.setImageDrawable(drawable);
-        if (drawable instanceof AnimatedImageDrawable) ((AnimatedImageDrawable) drawable).start();
+        if (drawable instanceof AnimatedImageDrawable) {((AnimatedImageDrawable) drawable).setRepeatCount(1);((AnimatedImageDrawable) drawable).start();}
+    }
+    @Override public void gif(String recipient,java.util.function.Consumer<GifChoice> select) {
+        if(gifPickerDialog!=null&&gifPickerDialog.isShowing())return;
+        final long ticket=uiLifecycle.ticket();final java.util.concurrent.atomic.AtomicLong request=new java.util.concurrent.atomic.AtomicLong();final int[] page={0};final GifChoice[] selected={null};final boolean[] favorites={false};
+        LinearLayout content=new LinearLayout(this);content.setOrientation(LinearLayout.VERTICAL);content.setPadding(pixels(12),0,pixels(12),0);
+        TextView note=new TextView(this);note.setText("Chọn GIF cho bản nháp. Chưa gửi GIF qua Zalo.");note.setTextSize(12);content.addView(note);
+        EditText search=new EditText(this);search.setSingleLine(true);search.setHint("Tìm GIF theo tên hoặc thẻ");content.addView(search);
+        android.widget.CheckBox favorite=new android.widget.CheckBox(this);favorite.setText("Chỉ yêu thích");content.addView(favorite);
+        ScrollView rowsScroll=new ScrollView(this);LinearLayout rows=new LinearLayout(this);rows.setOrientation(LinearLayout.VERTICAL);rowsScroll.addView(rows);content.addView(rowsScroll,new LinearLayout.LayoutParams(-1,pixels(100)));
+        LinearLayout pages=new LinearLayout(this);Button previous=new Button(this);previous.setText("‹");previous.setContentDescription("Trang GIF trước");Button next=new Button(this);next.setText("›");next.setContentDescription("Trang GIF sau");TextView count=new TextView(this);count.setGravity(android.view.Gravity.CENTER);pages.addView(previous,new LinearLayout.LayoutParams(pixels(48),pixels(42)));pages.addView(count,new LinearLayout.LayoutParams(0,pixels(42),1));pages.addView(next,new LinearLayout.LayoutParams(pixels(48),pixels(42)));content.addView(pages);
+        ImageView preview=new ImageView(this);preview.setAdjustViewBounds(true);preview.setContentDescription("Xem trước GIF đã chọn");content.addView(preview,new LinearLayout.LayoutParams(-1,pixels(80)));
+        TextView details=new TextView(this);details.setTextSize(12);details.setText("Chạm một GIF để kiểm tra và xem trước.");content.addView(details);
+        AlertDialog dialog=new CaptureProtection.Builder(this).setTitle("GIF • "+SendStatus.previewName(recipient)).setView(content).setNegativeButton("Đóng",null).setPositiveButton("Chọn vào bản nháp",null).create();gifPickerDialog=dialog;
+        Runnable refresh=()->{
+            request.incrementAndGet();selected[0]=null;stopGif(preview);if(dialog.isShowing())dialog.getButton(AlertDialog.BUTTON_POSITIVE).setEnabled(false);rows.removeAllViews();
+            if(!galleryReady){count.setText("…");previous.setEnabled(false);next.setEnabled(false);TextView message=new TextView(this);message.setText(galleryProblem.isEmpty()?"Đang mở thư viện…":galleryProblem);rows.addView(message);return;}
+            java.util.List<GifGallery.Entry> matching=GifGallery.filter(galleryEntries,search.getText().toString(),favorites[0]);page[0]=Math.max(0,Math.min(page[0],GifGallery.pageCount(matching.size())-1));count.setText(matching.size()+" GIF • "+(page[0]+1)+"/"+GifGallery.pageCount(matching.size()));previous.setEnabled(page[0]>0);next.setEnabled(page[0]+1<GifGallery.pageCount(matching.size()));
+            if(matching.isEmpty()){TextView empty=new TextView(this);empty.setText("Chưa có GIF phù hợp. Nhập GIF ở Cá nhân → GIF.");rows.addView(empty);}
+            for(GifGallery.Entry entry:GifGallery.page(matching,page[0])){
+                Button pick=new Button(this);pick.setAllCaps(false);pick.setText((entry.favorite?"★ ":"")+entry.name);rows.addView(pick,new LinearLayout.LayoutParams(-1,-2));
+                pick.setOnClickListener(v->{long generation=request.incrementAndGet();selected[0]=null;dialog.getButton(AlertDialog.BUTTON_POSITIVE).setEnabled(false);stopGif(preview);details.setText("Đang kiểm tra tệp và mở xem trước…");
+                    GIF_IO.execute(()->{if(generation!=request.get())return;try{byte[] bytes=gifFiles().read(entry.id);long size=nativeGifDimensions(bytes);Drawable drawable=decodeGif(bytes,size);GifChoice choice=new GifChoice(entry.id,entry.name,bytes.length,size);
+                        runOnUiThread(()->{if(!uiLifecycle.accepts(ticket)||!dialog.isShowing()||generation!=request.get()||isFinishing()||isDestroyed())return;selected[0]=choice;preview.setImageDrawable(drawable);if(drawable instanceof AnimatedImageDrawable){((AnimatedImageDrawable)drawable).setRepeatCount(1);((AnimatedImageDrawable)drawable).start();}details.setText(choice.name+" • "+choice.width+"×"+choice.height+" • "+choice.bytes+" byte\nChạm ảnh để phát lại; chưa gửi.");preview.setOnClickListener(image->{if(drawable instanceof AnimatedImageDrawable)((AnimatedImageDrawable)drawable).start();});dialog.getButton(AlertDialog.BUTTON_POSITIVE).setEnabled(true);});
+                    }catch(Exception error){runOnUiThread(()->{if(dialog.isShowing()&&generation==request.get())details.setText("Không mở được GIF: tệp thiếu, bị thay đổi hoặc không hợp lệ. Bản nháp chưa đổi.");});}});
+                });
+            }
+        };
+        refreshGifPicker=refresh;previous.setOnClickListener(v->{page[0]--;refresh.run();});next.setOnClickListener(v->{page[0]++;refresh.run();});favorite.setOnCheckedChangeListener((button,checked)->{favorites[0]=checked;page[0]=0;refresh.run();});
+        search.addTextChangedListener(new TextWatcher(){public void beforeTextChanged(CharSequence s,int start,int count,int after){}public void onTextChanged(CharSequence s,int start,int before,int count){page[0]=0;refresh.run();}public void afterTextChanged(Editable value){}});
+        dialog.setOnDismissListener(value->{request.incrementAndGet();stopGif(preview);if(gifPickerDialog==dialog){gifPickerDialog=null;refreshGifPicker=null;}});dialog.show();dialog.getButton(AlertDialog.BUTTON_POSITIVE).setEnabled(false);
+        dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(v->{if(selected[0]==null||!uiLifecycle.accepts(ticket))return;GifChoice choice=selected[0];dialog.dismiss();select.accept(choice);});
+        refresh.run();renderGallery();
+    }
+    private GifFiles gifFiles(){return new GifFiles(new File(getFilesDir(),"personal_gifs"));}
+    private static void stopGif(ImageView view){if(view!=null){Drawable old=view.getDrawable();if(old instanceof AnimatedImageDrawable)((AnimatedImageDrawable)old).stop();view.setImageDrawable(null);view.setOnClickListener(null);}}
+    private Drawable decodeGif(byte[] bytes) throws Exception {return decodeGif(bytes,nativeGifDimensions(bytes));}
+    private Drawable decodeGif(byte[] bytes,long dimensions) throws Exception {
+        if(dimensions==0)throw new java.io.IOException("GIF không hợp lệ");
+        return ImageDecoder.decodeDrawable(ImageDecoder.createSource(ByteBuffer.wrap(bytes)),(decoder,info,source)->{
+            if(!"image/gif".equals(info.getMimeType()))throw new IllegalArgumentException("Không phải GIF");
+            int width=info.getSize().getWidth(),height=info.getSize().getHeight();double scale=Math.min(1.0,384.0/Math.max(width,height));decoder.setTargetSize(Math.max(1,(int)(width*scale)),Math.max(1,(int)(height*scale)));decoder.setAllocator(ImageDecoder.ALLOCATOR_SOFTWARE);decoder.setOnPartialImageListener(error->false);
+        });
     }
 
     private void reloadTemplates() {
@@ -770,9 +808,4 @@ public final class MainActivity extends Activity implements MobileShell.SendActi
         return "GIF đã nhập";
     }
 
-    private static String hex(byte[] bytes) {
-        StringBuilder out = new StringBuilder(bytes.length * 2);
-        for (byte value : bytes) out.append(String.format("%02x", value & 0xff));
-        return out.toString();
-    }
 }

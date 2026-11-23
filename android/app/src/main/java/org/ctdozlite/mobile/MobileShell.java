@@ -10,7 +10,9 @@ import android.widget.*;
 /** Mobile navigation and local draft workspace. Never represents fixture chats as live data. */
 final class MobileShell {
     interface SendActions {
+        void viewChanged();
         void template(String recipient,java.util.function.Consumer<String> insert);
+        void gif(String recipient,java.util.function.Consumer<GifChoice> select);
         void request(String account,String target,boolean group,String name,String text,java.util.function.Consumer<org.json.JSONObject> done);
         void status(String account,String target,boolean group,java.util.function.Consumer<org.json.JSONObject> done);
     }
@@ -23,15 +25,16 @@ final class MobileShell {
     private org.json.JSONArray conversations=new org.json.JSONArray();
     private boolean demo, limited, recentLoading, inConversation;
     private final java.util.Map<String,String> drafts=new java.util.HashMap<>();
+    private final java.util.Map<String,GifChoice> gifDrafts=new java.util.HashMap<>();
     private String conversationAccount="";
     private String searchQuery="";
     private String activeConversationKey="";
     private long composerGeneration;
-    void clearRecent(){conversations=new org.json.JSONArray();drafts.clear();demo=false;limited=false;conversationAccount="";searchQuery="";selected=0;if(root!=null)show();}
+    void clearRecent(){conversations=new org.json.JSONArray();drafts.clear();gifDrafts.clear();demo=false;limited=false;conversationAccount="";searchQuery="";selected=0;if(root!=null)show();}
     void setRecentLoading(boolean loading) { recentLoading=loading;if(selected==0&&!inConversation&&body!=null)select(0); }
     void acceptRecent(org.json.JSONObject data,boolean isDemo) {
         String account=data.optString("account");
-        if(!isDemo&&!account.equals(conversationAccount)){drafts.clear();conversationAccount=account;}
+        if(!isDemo&&!account.equals(conversationAccount)){drafts.clear();gifDrafts.clear();conversationAccount=account;}
         conversations=data.optJSONArray("conversations");if(conversations==null)conversations=new org.json.JSONArray();
         demo=isDemo;limited=data.optBoolean("limited");if(selected==0&&!inConversation&&body!=null)select(0);
     }
@@ -54,6 +57,7 @@ final class MobileShell {
         ImageButton button=new ImageButton(activity);button.setImageDrawable(new MobileIcon(kind));button.setColorFilter(color);button.setBackgroundColor(Color.TRANSPARENT);button.setPadding(dp(12),dp(12),dp(12),dp(12));button.setContentDescription(description);button.setTooltipText(description);button.setOnClickListener(v->action.run());return button;
     }
     void show() {
+        sends.viewChanged();
         composerGeneration++;
         inConversation=false;
         root = new LinearLayout(activity); root.setOrientation(LinearLayout.VERTICAL); root.setBackgroundColor(Color.WHITE);
@@ -88,6 +92,7 @@ final class MobileShell {
         select(selected);
     }
     private void select(int index) {
+        sends.viewChanged();
         composerGeneration++;
         inConversation=false;
         selected=index; body.removeAllViews();
@@ -149,6 +154,7 @@ final class MobileShell {
     }
     private String time(long ts){return ts<=0?"":new java.text.SimpleDateFormat("HH:mm",java.util.Locale.ROOT).format(new java.util.Date(ts));}
     private void openConversation(org.json.JSONObject entry){
+        sends.viewChanged();
         final long composition=++composerGeneration;
         inConversation=true;activeConversationKey=(entry.optBoolean("group")?"g:":"u:")+entry.optString("id");root.removeAllViews();
         LinearLayout header=new LinearLayout(activity);header.setGravity(Gravity.CENTER_VERTICAL);header.setPadding(dp(8),dp(8),dp(12),dp(8));header.setBackgroundColor(blue);
@@ -168,11 +174,19 @@ final class MobileShell {
         ImageButton quick=icon(14,"Mẫu tin nhanh",blue,tools);toolbar.addView(quick,new LinearLayout.LayoutParams(dp(48),dp(48)));root.addView(toolbar);
         String key=(entry.optBoolean("group")?"g:":"u:")+entry.optString("id");
         final boolean demoChat=demo;final String account=conversationAccount;
+        LinearLayout attachment=new LinearLayout(activity);attachment.setGravity(Gravity.CENTER_VERTICAL);attachment.setPadding(dp(12),0,dp(8),0);attachment.setBackgroundColor(0xffeef4fc);TextView attachmentLabel=text("",13,0xff526479);attachment.addView(attachmentLabel,new LinearLayout.LayoutParams(0,-2,1));TextView removeGif=text("×",26,blue);removeGif.setGravity(Gravity.CENTER);removeGif.setContentDescription("Bỏ GIF khỏi bản nháp");attachment.addView(removeGif,new LinearLayout.LayoutParams(dp(48),dp(48)));root.addView(attachment);
+        Runnable renderAttachment=()->{GifChoice choice=gifDrafts.get(key);attachment.setVisibility(choice==null?android.view.View.GONE:android.view.View.VISIBLE);if(choice!=null)attachmentLabel.setText("GIF: "+choice.name+" • "+choice.width+"×"+choice.height+"\nĐã chọn trên máy • gửi GIF chưa hỗ trợ");};renderAttachment.run();
         LinearLayout composer=new LinearLayout(activity);composer.setGravity(Gravity.CENTER_VERTICAL);composer.setPadding(dp(4),dp(4),dp(4),dp(4));
         EditText input=new EditText(activity);input.setTextSize(16);input.setPadding(dp(12),dp(10),dp(12),dp(10));input.setBackground(background(0xfff1f4f8,20));input.setMinLines(2);input.setMaxLines(5);input.setFilters(new android.text.InputFilter[]{new android.text.InputFilter.LengthFilter(4000)});input.setHint(demoChat?"Nhập tin thử…":"Tin nhắn");input.setText(drafts.getOrDefault(key,""));composer.addView(input,new LinearLayout.LayoutParams(0,-2,1));
         ImageButton send=icon(12,demoChat?"Gửi tin thử trên máy":"Gửi tin nhắn",blue,()->{});composer.addView(send,new LinearLayout.LayoutParams(dp(48),dp(48)));root.addView(composer);
         toolbar.addView(icon(9,"Chèn biểu cảm",muted,()->new CaptureProtection.Builder(activity).setTitle("Biểu cảm").setItems(new String[]{"😊","❤️","👍","😂","🎉","🙏"},(dialog,which)->{String value=new String[]{"😊","❤️","👍","😂","🎉","🙏"}[which];int start=Math.max(0,input.getSelectionStart()),end=Math.max(start,input.getSelectionEnd());input.getText().replace(start,end,value);}).setNegativeButton("Đóng",null).show()),new LinearLayout.LayoutParams(dp(48),dp(48)));
         TextView result=text(demoChat?SendStatus.describe("local_demo"):"Gửi thử nghiệm chưa được kiểm chứng bằng tài khoản thật",11,muted);result.setPadding(dp(12),dp(4),dp(12),dp(6));root.addView(result);
+        removeGif.setOnClickListener(v->{gifDrafts.remove(key);renderAttachment.run();result.setText("Đã bỏ GIF. Bản nháp tin chữ được giữ.");});
+        gif.setOnClickListener(v->sends.gif(entry.optString("name"),choice->{
+            if(!inConversation||composition!=composerGeneration||!activeConversationKey.equals(key)||!conversationAccount.equals(account)||demo!=demoChat)return;
+            if(!gifDrafts.containsKey(key)&&gifDrafts.size()>=32){result.setText("Đã có 32 bản nháp GIF; hãy bỏ bớt trước khi chọn thêm.");return;}
+            gifDrafts.put(key,choice);renderAttachment.run();result.setText("GIF chỉ ở bản nháp, chưa gửi. Bỏ GIF để gửi tin chữ.");
+        }));
         quick.setOnClickListener(v->{
             String expected=input.getText().toString();int start=Math.max(0,input.getSelectionStart()),end=Math.max(start,input.getSelectionEnd());
             sends.template(entry.optString("name"),expanded->{
@@ -184,6 +198,7 @@ final class MobileShell {
         check.setOnClickListener(v->{if(demoChat)result.setText(SendStatus.describe("local_demo"));else sends.status(account,entry.optString("id"),entry.optBoolean("group"),value->{String phase=value.optString("phase");result.setText(value.optString("message",SendStatus.describe(phase)));send.setEnabled(!phase.equals("sending"));if(SendStatus.canClearDraft(input.getText().toString(),value.optString("text"),phase)){drafts.remove(key);input.setText("");}});});
         input.addTextChangedListener(new android.text.TextWatcher(){public void beforeTextChanged(CharSequence s,int st,int c,int a){}public void onTextChanged(CharSequence s,int st,int b,int c){drafts.put(key,s.toString());}public void afterTextChanged(android.text.Editable e){}});
         send.setOnClickListener(v->{
+            if(gifDrafts.containsKey(key)){result.setText("Gửi GIF qua Zalo chưa hỗ trợ ở bản này. Bỏ GIF để gửi tin chữ.");return;}
             String content=input.getText().toString();if(content.trim().isEmpty())return;send.setEnabled(false);
             java.util.function.Consumer<org.json.JSONObject> completed=value->{
                 send.setEnabled(true);String phase=value.optString("phase");result.setText(value.optString("message",SendStatus.describe(phase)));
@@ -213,6 +228,7 @@ final class MobileShell {
         Button button=new Button(activity); button.setText(action); button.setAllCaps(false); button.setTextColor(blue); button.setBackground(background(0xffe9f2ff,22)); button.setPadding(dp(24),0,dp(24),0); button.setOnClickListener(v->click.run()); space.addView(button,new LinearLayout.LayoutParams(-2,dp(48))); body.addView(space,new LinearLayout.LayoutParams(-1,0,1));
     }
     private void draft() {
+        sends.viewChanged();
         root.removeAllViews();
         LinearLayout header=new LinearLayout(activity); header.setGravity(Gravity.CENTER_VERTICAL); header.setBackgroundColor(blue); header.setPadding(dp(12),dp(8),dp(12),dp(8));
         Button back=new Button(activity); back.setText("‹"); back.setOnClickListener(v->show()); header.addView(back,new LinearLayout.LayoutParams(dp(48),dp(48)));
