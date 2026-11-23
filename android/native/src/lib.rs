@@ -6,6 +6,38 @@ use jni::JNIEnv;
 mod auth;
 
 #[no_mangle]
+pub extern "system" fn Java_org_ctdozlite_mobile_MainActivity_nativeRecentConversations(
+    env: JNIEnv,
+    _this: JObject,
+) -> jstring {
+    let result = if let Some((generation, session)) = auth::snapshot() {
+        match tokio::runtime::Runtime::new() {
+            Ok(runtime)=>runtime.block_on(async {
+                let cancelled=async { while auth::is_current(generation){tokio::time::sleep(std::time::Duration::from_millis(100)).await;} };
+                let request=async {
+                    let user=session.login.as_ref().ok_or_else(||anyhow::anyhow!("missing identity"))?.uin.clone();
+                    let response=ctdozlite_auth::conversation_transport::get_last_msgs(&session,&[]).await?;
+                    Ok::<_,anyhow::Error>((ctdozlite_auth::recent::parse(&response,&user)?,user))
+                };
+                tokio::select! {
+                    _=cancelled=>serde_json::json!({"phase":"cancelled"}),
+                    response=tokio::time::timeout(std::time::Duration::from_secs(30),request)=>match response {
+                        Ok(Ok((snapshot,user))) if auth::is_current(generation)=>serde_json::json!({"phase":"loaded","data":snapshot,"account":user}),
+                        _=>serde_json::json!({"phase":"error","message":"Không tải được tin gần đây. Hãy kiểm tra mạng hoặc phiên đăng nhập."}),
+                    }
+                }
+            }),
+            Err(_)=>serde_json::json!({"phase":"error","message":"Không tạo được tác vụ tải hội thoại."}),
+        }
+    } else {
+        serde_json::json!({"phase":"requires_login"})
+    };
+    env.new_string(result.to_string())
+        .map(|s| s.into_raw())
+        .unwrap_or(std::ptr::null_mut())
+}
+
+#[no_mangle]
 pub extern "system" fn Java_org_ctdozlite_mobile_MainActivity_nativeAuthRestore(
     env: JNIEnv,
     _this: JObject,

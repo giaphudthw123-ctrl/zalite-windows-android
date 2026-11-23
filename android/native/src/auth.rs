@@ -168,9 +168,27 @@ pub fn restore(bytes: &[u8]) -> String {
     }
     s.generation += 1;
     s.saved = None;
+    s.cancel = Arc::new(AtomicBool::new(false));
     s.session = Some(session);
     s.status = json!({"phase":"restored_unverified","name":name});
     s.status.to_string()
+}
+
+pub fn snapshot() -> Option<(u64, Session)> {
+    state().lock().ok().and_then(|s| {
+        if s.active || s.cancel.load(Ordering::Relaxed) {
+            None
+        } else {
+            s.session
+                .as_ref()
+                .map(|session| (s.generation, session.clone()))
+        }
+    })
+}
+pub fn is_current(generation: u64) -> bool {
+    state().lock().ok().is_some_and(|s| {
+        s.generation == generation && s.session.is_some() && !s.cancel.load(Ordering::Relaxed)
+    })
 }
 
 #[cfg(test)]
@@ -233,5 +251,20 @@ mod tests {
         let previous = status(42);
         assert!(restore(b"malformed").contains("restore_error"));
         assert_eq!(status(42), previous);
+        let mut fixture = Session::new(false, false, false).unwrap();
+        fixture.secret_key = Some(vec![7; 32]);
+        fixture.set_zpw_sek("synthetic-token".into());
+        fixture.login = Some(ctdozlite_auth::session::LoginInfo {
+            uin: "10001".into(),
+            ..Default::default()
+        });
+        assert!(restore(&fixture.serialize_for_secure_storage().unwrap())
+            .contains("restored_unverified"));
+        let (generation, _) = snapshot().unwrap();
+        assert!(is_current(generation));
+        assert!(!is_current(42));
+        cancel(generation);
+        assert!(!is_current(generation));
+        assert!(snapshot().is_none());
     }
 }

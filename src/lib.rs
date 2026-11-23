@@ -8,6 +8,7 @@ pub mod audio;
 pub mod call;
 pub mod chat;
 pub mod clock;
+pub mod conversation_transport;
 pub mod crypto;
 /// Colour emoji bitmaps extracted from the system emoji font (worker-side only).
 pub mod emoji_raster;

@@ -49,6 +49,9 @@ public final class MainActivity extends Activity {
     private native String nativeAuthStatus(long generation);
     private native byte[] nativeAuthTake(long generation);
     private native String nativeAuthRestore(byte[] bytes);
+    private native String nativeRecentConversations();
+    private boolean recentLoading;
+    private int recentUiGeneration;
     private long authGeneration;
     private final android.os.Handler authHandler = new android.os.Handler(android.os.Looper.getMainLooper());
 
@@ -161,7 +164,7 @@ public final class MainActivity extends Activity {
         content.addView(templateList);
         renderGallery();
         renderTemplates();
-        mobileShell = new MobileShell(this, () -> setContentView(toolsScreen), this::showLogin);
+        mobileShell = new MobileShell(this, () -> setContentView(toolsScreen), this::showLogin, this::loadRecent);
         mobileShell.show();
         handleSharedGif(getIntent());
     }
@@ -194,8 +197,28 @@ public final class MainActivity extends Activity {
             if(message!=null)runOnUiThread(()->{if(authGeneration==0&&!isFinishing()&&!isDestroyed())mobileShell.setLocalSessionLabel(message);});
         },"session-vault-restore").start();
     }
+    private void loadRecent() {
+        if(recentLoading)return;
+        final int requestGeneration=++recentUiGeneration;
+        recentLoading=true;mobileShell.setRecentLoading(true);
+        new Thread(()->{
+            String response=nativeRecentConversations();
+            runOnUiThread(()->{
+                if(requestGeneration!=recentUiGeneration)return;
+                recentLoading=false;mobileShell.setRecentLoading(false);
+                if(isFinishing()||isDestroyed())return;
+                try{
+                    org.json.JSONObject result=new org.json.JSONObject(response);
+                    if(result.optString("phase").equals("loaded"))mobileShell.acceptRecent(result.getJSONObject("data").put("account",result.optString("account")),false);
+                    else Toast.makeText(this,result.optString("phase").equals("requires_login")?"Cần phiên đăng nhập trước khi tải hội thoại.":result.optString("message","Tác vụ đã hủy do phiên thay đổi."),Toast.LENGTH_LONG).show();
+                }catch(Exception error){Toast.makeText(this,"Không đọc được danh sách hội thoại.",Toast.LENGTH_LONG).show();}
+            });
+        },"recent-conversations").start();
+    }
     private void showLogin() {
         cancelAuth();
+        recentUiGeneration++;recentLoading=false;mobileShell.setRecentLoading(false);
+        mobileShell.clearRecent();
         LinearLayout page=new LinearLayout(this);page.setOrientation(LinearLayout.VERTICAL);page.setPadding(24,48,24,48);page.setBackgroundColor(0xffffffff);
         TextView heading=new TextView(this);heading.setText("Đăng nhập bằng QR");heading.setTextSize(24);page.addView(heading);
         TextView info=new TextView(this);info.setText("Luồng thiết bị đồng hành thử nghiệm. Khi tạo mã, dùng Zalo trên điện thoại đã đăng nhập để quét và xác nhận. Chưa hỗ trợ đăng nhập tài khoản chính bằng số điện thoại.");page.addView(info);
@@ -223,7 +246,7 @@ public final class MainActivity extends Activity {
                     else if(phase.equals("requesting"))progress.setText("Đang yêu cầu mã QR…");
                     else if(phase.equals("authenticated")) {
                         byte[] session=nativeAuthTake(generation);qr.setImageDrawable(null);progress.setText("Đang bảo vệ phiên trên thiết bị…");
-                        new Thread(()->{boolean ok=false;try{new SessionVault(MainActivity.this).save(session);ok=true;}catch(Exception error){}finally{if(session!=null)Arrays.fill(session,(byte)0);}final boolean saved=ok;runOnUiThread(()->{start.setEnabled(true);progress.setText(saved?"Đã xác thực và lưu phiên bảo vệ. Đồng bộ hội thoại chưa được nối.":"Không lưu được phiên bảo vệ. Hãy hủy và thử lại.");});},"session-vault-save").start();return;
+                        new Thread(()->{boolean ok=false;try{new SessionVault(MainActivity.this).save(session);ok=true;}catch(Exception error){}finally{if(session!=null)Arrays.fill(session,(byte)0);}final boolean saved=ok;runOnUiThread(()->{start.setEnabled(true);progress.setText(saved?"Đã lưu phiên bảo vệ. Về Tin nhắn để tải tin gần đây.":"Không lưu được phiên bảo vệ. Hãy hủy và thử lại.");});},"session-vault-save").start();return;
                     } else {qr.setImageDrawable(null);progress.setText(state.optString("message","Đã kết thúc hoặc hủy đăng nhập."));start.setEnabled(true);return;}
                     authHandler.postDelayed(this,500);
                 } catch(Exception error){cancelAuth();qr.setImageDrawable(null);progress.setText("Không đọc được trạng thái đăng nhập.");start.setEnabled(true);}

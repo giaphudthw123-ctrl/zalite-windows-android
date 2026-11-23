@@ -4439,45 +4439,7 @@ pub async fn recall_message(
 /// [O] request: GET `{convers_api}/api/preloadconvers/get-last-msgs?{common}&params={encodeAES(json)}`
 /// where payload is `{ threadIdLocalMsgId: map_object, imei }`.
 pub async fn get_last_msgs(s: &Session, thread_ids: &[String]) -> Result<Value> {
-    if s.login.is_none() {
-        anyhow::bail!("chưa đăng nhập");
-    }
-    let mut map = serde_json::Map::new();
-    // [O] `getLastMessagesForPreview(e)` in `compact-app-pc.js:14385933` passes `{}` on preload
-    // to fetch all recent conversation previews without overflowing URL length.
-    if thread_ids.len() <= 25 {
-        for id in thread_ids {
-            let clean = id.trim_start_matches("group_").trim_start_matches('g');
-            let key = if id.starts_with("group_") || id.starts_with('g') {
-                format!("{clean}_1")
-            } else {
-                format!("{clean}_0")
-            };
-            map.insert(key, json!("1"));
-        }
-    }
-    let map_str = serde_json::to_string(&map).unwrap_or_else(|_| "{}".into());
-    let body = obj(&[
-        ("threadIdLocalMsgId", json!(map_str)),
-        ("imei", json!(s.imei)),
-    ]);
-    let params = match s.encoded_params(&body) {
-        Ok(p) => format!("params={p}"),
-        Err(e) => {
-            crate::logger::log_error("chat::get_last_msgs::encoded_params", &e.to_string());
-            eprintln!("! get_last_msgs: no session key for encoded_params ({e}), falling back to plain_params");
-            Session::plain_params(&body)
-        }
-    };
-
-    let url = format!(
-        "{}/api/preloadconvers/get-last-msgs?{}&{params}",
-        s.domains.convers_api,
-        s.common_params()
-    );
-    let resp = s.get(&url).await?;
-    let resp = s.maybe_decrypt(resp, s.session_key_bytes()).await;
-    Ok(resp)
+    crate::conversation_transport::get_last_msgs(s, thread_ids).await
 }
 
 /// `GET /api/pinconvers/list` (cmd 12120) — pinned threads.
