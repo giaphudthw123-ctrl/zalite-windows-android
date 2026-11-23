@@ -68,6 +68,14 @@ public final class MainActivity extends Activity implements MobileShell.SendActi
     private final android.os.Handler authHandler = new android.os.Handler(android.os.Looper.getMainLooper());
 
     private final ArrayList<String> templates = new ArrayList<>();
+    private static final java.util.concurrent.ExecutorService TEMPLATE_IO=java.util.concurrent.Executors.newSingleThreadExecutor();
+    private TemplateStore templateStore;
+    private long templateRevision;
+    private boolean templatesReady,templatesLoading,templatesSaving;
+    private String templatesProblem="";
+    private final ArrayList<AlertDialog> templateDialogs=new ArrayList<>();
+    private AlertDialog templatePickerDialog;
+    private Runnable refreshTemplatePicker;
     private LinearLayout galleryList;
     private LinearLayout templateList;
     private ImageView gifPreview;
@@ -83,7 +91,7 @@ public final class MainActivity extends Activity implements MobileShell.SendActi
 
     @Override public void onCreate(Bundle state) {
         super.onCreate(state);
-        loadTemplates();
+        getWindow().getDecorView().setSystemUiVisibility(android.view.View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR | android.view.View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR);
         ScrollView scroll = new ScrollView(this);
         toolsScreen = scroll;
         LinearLayout content = new LinearLayout(this);
@@ -101,7 +109,7 @@ public final class MainActivity extends Activity implements MobileShell.SendActi
         backToMessages.setOnClickListener(v -> mobileShell.show());
         content.addView(backToMessages);
         TextView notice = new TextView(this);
-        notice.setText("GIF và mẫu tin được lưu trên máy này. Bản thử chưa kết nối hoặc gửi tin qua Zalo.");
+        notice.setText("GIF và mẫu là thư viện trên thiết bị. Trong hội thoại, bấm Mẫu tin để xem trước và chèn; thao tác chèn không tự gửi.");
         content.addView(notice);
         status = new TextView(this);
         content.addView(status);
@@ -179,15 +187,18 @@ public final class MainActivity extends Activity implements MobileShell.SendActi
         mobileShell = new MobileShell(this, () -> setContentView(toolsScreen), this::showLogin, this::loadRecent,this);
         mobileShell.show();
         handleSharedGif(getIntent());
+        reloadTemplates();
     }
 
     @Override protected void onStart() {
         super.onStart();
         uiLifecycle.resume();
         if(mobileShell!=null && authGeneration==0)restoreStoredSession();
+        if(templateStore!=null&&!templatesLoading&&!templatesSaving)reloadTemplates();
     }
     @Override protected void onStop() {
         uiLifecycle.stop();
+        for(AlertDialog dialog:new ArrayList<>(templateDialogs))dialog.cancel();
         if(sendConfirmation!=null)sendConfirmation.cancel();
         nativeRecentCancel();
         recentLoading=false;
@@ -302,7 +313,7 @@ public final class MainActivity extends Activity implements MobileShell.SendActi
         resetQrUi=()->{qr.setImageDrawable(null);start.setEnabled(true);progress.setText("Đã hủy mã QR khi rời màn hình. Bấm Tạo mã QR để thử lại.");};
         Button cancel=new Button(this);cancel.setText("Hủy và về Tin nhắn");cancel.setOnClickListener(v->{cancelAuth();qr.setImageDrawable(null);mobileShell.show();});page.addView(cancel);
         Button check=new Button(this);check.setText("Kiểm tra kho bảo vệ bằng dữ liệu giả");page.addView(check);
-        check.setOnClickListener(v->{ check.setEnabled(false);new Thread(()->{boolean ok;try{SessionVault.selfTest(this);ok=true;}catch(Exception error){ok=false;}final boolean passed=ok;runOnUiThread(()->{check.setEnabled(true);progress.setText(passed?"Kiểm tra Keystore: khôi phục, dữ liệu ngẫu nhiên và chống sửa đổi đều qua.":"Thiết bị chưa vượt qua kiểm tra kho bảo vệ.");});},"vault-selftest").start(); });
+        check.setOnClickListener(v->{ check.setEnabled(false);new Thread(()->{boolean ok;try{SessionVault.selfTest(this);TemplateStore.selfTest(this,this::nativeNormalizeTemplate);ok=true;}catch(Exception error){ok=false;}final boolean passed=ok;runOnUiThread(()->{check.setEnabled(true);progress.setText(passed?"Kiểm tra Keystore và kho mẫu: mã hóa, chuyển đổi, giữ dữ liệu lỗi và chặn ghi cũ đều qua.":"Thiết bị chưa vượt qua kiểm tra kho bảo vệ.");});},"vault-selftest").start(); });
         start.setOnClickListener(v->{cancelAuth();start.setEnabled(false);authGeneration=nativeAuthStart();final long generation=authGeneration;
             if(generation==0){start.setEnabled(true);progress.setText("Không bắt đầu được đăng nhập. Hãy thử lại.");return;}
             authHandler.post(new Runnable(){private boolean rendered; public void run(){
@@ -563,98 +574,131 @@ public final class MainActivity extends Activity implements MobileShell.SendActi
         if (drawable instanceof AnimatedImageDrawable) ((AnimatedImageDrawable) drawable).start();
     }
 
-    private void loadTemplates() {
-        try {
-            JSONArray saved = new JSONArray(getPreferences(MODE_PRIVATE).getString("templates", "[]"));
-            for (int i = 0; i < Math.min(saved.length(), MAX_TEMPLATES); i++) {
-                String normalized = nativeNormalizeTemplate(saved.optString(i));
-                if (normalized != null) templates.add(normalized);
-            }
-        } catch (Exception ignored) { templates.clear(); }
+    private void reloadTemplates() {
+        if(templatesLoading||templatesSaving)return;
+        templatesLoading=true;templatesReady=false;templatesProblem="";renderTemplates();
+        TEMPLATE_IO.execute(()->{
+            TemplateStore store=null;
+            TemplateStore.Snapshot snapshot=null;
+            try{store=new TemplateStore(this,getPreferences(MODE_PRIVATE),this::nativeNormalizeTemplate);snapshot=store.load();}catch(Exception error){}
+            final TemplateStore.Snapshot loaded=snapshot;
+            final TemplateStore openedStore=store;
+            runOnUiThread(()->{
+                if(isDestroyed())return;
+                templatesLoading=false;templateStore=openedStore;
+                if(loaded!=null){templates.clear();templates.addAll(loaded.items);templateRevision=loaded.revision;templatesReady=true;}
+                else templatesProblem="Không mở được kho mẫu bảo vệ. Dữ liệu cũ vẫn được giữ; hãy thử lại.";
+                renderTemplates();if(refreshTemplatePicker!=null)refreshTemplatePicker.run();
+            });
+        });
     }
 
-    private void saveTemplates() {
-        JSONArray saved = new JSONArray();
-        for (String template : templates) saved.put(template);
-        getPreferences(MODE_PRIVATE).edit().putString("templates", saved.toString()).apply();
+    private void persistTemplates(ArrayList<String> proposed,java.util.function.Consumer<Boolean> done) {
+        if(!templatesReady||templatesSaving||templateStore==null){Toast.makeText(this,"Kho mẫu chưa sẵn sàng hoặc đang lưu.",Toast.LENGTH_SHORT).show();done.accept(false);return;}
+        templatesSaving=true;final TemplateStore destination=templateStore;final long revision=templateRevision;
+        TEMPLATE_IO.execute(()->{
+            TemplateStore.Snapshot snapshot=null;
+            try{snapshot=destination.save(revision,proposed);}catch(Exception error){}
+            final TemplateStore.Snapshot saved=snapshot;
+            runOnUiThread(()->{
+                if(isDestroyed())return;
+                templatesSaving=false;
+                if(saved!=null){templates.clear();templates.addAll(saved.items);templateRevision=saved.revision;templatesReady=true;templatesProblem="";}
+                else{templatesReady=false;templatesProblem="Không lưu hoặc xác minh được kho mẫu. Giữ bản nhập và mở lại kho trước khi thử tiếp.";}
+                renderTemplates();if(refreshTemplatePicker!=null)refreshTemplatePicker.run();done.accept(saved!=null);
+            });
+        });
+    }
+
+    private AlertDialog showTemplateDialog(AlertDialog.Builder builder) {
+        AlertDialog dialog=builder.create();templateDialogs.add(dialog);
+        dialog.setOnDismissListener(value->templateDialogs.remove(dialog));dialog.show();return dialog;
     }
 
     private void renderTemplates() {
+        if(templateList==null)return;
         templateList.removeAllViews();
-        String query = templateSearch == null ? "" : templateSearch.getText().toString().trim().toLowerCase(Locale.ROOT);
-        for (int i = 0; i < templates.size(); i++) {
-            if (!templates.get(i).toLowerCase(Locale.ROOT).contains(query)) continue;
-            final int position = i;
-            LinearLayout row = new LinearLayout(this);
-            Button insert = new Button(this);
-            insert.setText(templates.get(i));
-            insert.setOnClickListener(v -> previewTemplate(templates.get(position)));
-            row.addView(insert, new LinearLayout.LayoutParams(0, -2, 1));
-            Button edit = new Button(this);
-            edit.setText("Sửa");
-            edit.setOnClickListener(v -> editTemplate(position));
-            row.addView(edit);
-            Button remove = new Button(this);
-            remove.setText("Xóa");
-            remove.setOnClickListener(v -> new AlertDialog.Builder(this)
-                .setMessage("Xóa mẫu này khỏi máy?")
-                .setNegativeButton("Hủy", null)
-                .setPositiveButton("Xóa", (dialog, which) -> { templates.remove(position); saveTemplates(); renderTemplates(); })
-                .show());
-            row.addView(remove);
-            templateList.addView(row);
+        if(!templatesReady){
+            TextView note=new TextView(this);note.setText(templatesLoading?"Đang mở kho mẫu bảo vệ…":templatesProblem.isEmpty()?"Kho mẫu chưa mở.":templatesProblem);templateList.addView(note);
+            Button retry=new Button(this);retry.setText("Mở lại kho mẫu");retry.setEnabled(!templatesLoading&&!templatesSaving);retry.setOnClickListener(v->reloadTemplates());templateList.addView(retry);return;
         }
+        String query=templateSearch==null?"":templateSearch.getText().toString();
+        for(int i=0;i<templates.size();i++) {
+            final int position=i;final String text=templates.get(i);
+            if(!ConversationSearch.matches(text,"",query))continue;
+            LinearLayout row=new LinearLayout(this);
+            Button pick=new Button(this);pick.setAllCaps(false);pick.setText(text);pick.setOnClickListener(v->previewTemplate(text));row.addView(pick,new LinearLayout.LayoutParams(0,-2,1));
+            Button edit=new Button(this);edit.setText("Sửa");edit.setOnClickListener(v->editTemplate(position));row.addView(edit);
+            Button remove=new Button(this);remove.setText("Xóa");remove.setOnClickListener(v->{
+                if(!templatesReady||templatesSaving)return;
+                final long revision=templateRevision;
+                showTemplateDialog(new AlertDialog.Builder(this).setMessage("Xóa mẫu này khỏi máy?").setNegativeButton("Hủy",null).setPositiveButton("Xóa",(dialog,which)->{
+                    if(revision!=templateRevision){Toast.makeText(this,"Kho mẫu đã thay đổi. Hãy chọn lại.",Toast.LENGTH_SHORT).show();return;}
+                    ArrayList<String> next=new ArrayList<>(templates);next.remove(position);persistTemplates(next,ok->{});
+                }));
+            });row.addView(remove);templateList.addView(row);
+        }
+    }
+
+    @Override public void template(String recipient,java.util.function.Consumer<String> insert) {
+        if(templatePickerDialog!=null&&templatePickerDialog.isShowing())return;
+        final long ticket=uiLifecycle.ticket();
+        LinearLayout content=new LinearLayout(this);content.setOrientation(LinearLayout.VERTICAL);content.setPadding(16,8,16,8);
+        TextView note=new TextView(this);note.setText("Chèn vào bản nháp, không tự gửi. {ten}, {gio}, {ngay} được thay cục bộ.");content.addView(note);
+        Button create=new Button(this);create.setAllCaps(false);create.setText("Tạo mẫu mới");create.setOnClickListener(v->editTemplate(-1));content.addView(create);
+        EditText search=new EditText(this);search.setSingleLine(true);search.setHint("Tìm mẫu tin…");content.addView(search);
+        ScrollView scroll=new ScrollView(this);LinearLayout rows=new LinearLayout(this);rows.setOrientation(LinearLayout.VERTICAL);scroll.addView(rows);content.addView(scroll,new LinearLayout.LayoutParams(-1,Math.round(240*getResources().getDisplayMetrics().density)));
+        Runnable refresh=()->{
+            rows.removeAllViews();
+            if(!templatesReady){TextView message=new TextView(this);message.setText(templatesLoading?"Đang mở kho mẫu…":templatesProblem);rows.addView(message);Button retry=new Button(this);retry.setText("Mở lại kho mẫu");retry.setEnabled(!templatesLoading&&!templatesSaving);retry.setOnClickListener(v->reloadTemplates());rows.addView(retry);return;}
+            for(int i=0;i<templates.size();i++){
+                final int index=i;final String text=templates.get(i);
+                if(!ConversationSearch.matches(text,"",search.getText().toString()))continue;
+                LinearLayout row=new LinearLayout(this);
+                Button pick=new Button(this);pick.setAllCaps(false);pick.setText(text);pick.setMaxLines(2);pick.setEllipsize(android.text.TextUtils.TruncateAt.END);pick.setOnClickListener(v->{if(uiLifecycle.accepts(ticket))previewExpandedTemplate(text,recipient,insert);});row.addView(pick,new LinearLayout.LayoutParams(0,-2,1));
+                Button edit=new Button(this);edit.setAllCaps(false);edit.setText("Sửa");edit.setOnClickListener(v->editTemplate(index));row.addView(edit,new LinearLayout.LayoutParams(Math.round(64*getResources().getDisplayMetrics().density),-2));rows.addView(row);
+            }
+            if(rows.getChildCount()==0){TextView empty=new TextView(this);empty.setText(templates.isEmpty()?"Chưa có mẫu. Bấm Tạo mẫu mới.":"Không tìm thấy mẫu phù hợp.");rows.addView(empty);}
+        };
+        refreshTemplatePicker=refresh;refresh.run();
+        search.addTextChangedListener(new TextWatcher(){public void beforeTextChanged(CharSequence s,int st,int count,int after){}public void onTextChanged(CharSequence s,int st,int before,int count){refresh.run();}public void afterTextChanged(Editable e){}});
+        AlertDialog picker=new AlertDialog.Builder(this).setTitle("Mẫu tin nhanh • trên máy").setView(content).setNegativeButton("Đóng",null).create();templatePickerDialog=picker;templateDialogs.add(picker);
+        picker.setOnDismissListener(dialog->{templateDialogs.remove(picker);if(templatePickerDialog==picker){templatePickerDialog=null;refreshTemplatePicker=null;}});picker.show();
+    }
+
+    private void previewExpandedTemplate(String template,String recipient,java.util.function.Consumer<String> insert) {
+        final long ticket=uiLifecycle.ticket();String name=SendStatus.previewName(recipient);if(name.isEmpty())name="bạn";
+        java.util.Date now=new java.util.Date();String time=new java.text.SimpleDateFormat("HH:mm",Locale.ROOT).format(now),date=new java.text.SimpleDateFormat("dd/MM/yyyy",Locale.ROOT).format(now);
+        String expanded=nativeExpandTemplate(template,name,time,date);
+        if(expanded==null||expanded.length()>4000){Toast.makeText(this,"Mẫu sau khi thay biến quá dài hoặc không hợp lệ.",Toast.LENGTH_LONG).show();return;}
+        final String text=expanded;
+        showTemplateDialog(new AlertDialog.Builder(this).setTitle("Xem trước • "+name).setMessage(text).setNegativeButton("Hủy",null).setPositiveButton("Chèn vào ô nhập",(dialog,which)->{
+            if(!uiLifecycle.accepts(ticket))return;
+            if(templatePickerDialog!=null)templatePickerDialog.dismiss();insert.accept(text);
+        }));
     }
 
     private void previewTemplate(String template) {
-        EditText recipient = new EditText(this);
-        recipient.setSingleLine(true);
-        recipient.setHint("Tên người nhận để thay {ten}");
-        new AlertDialog.Builder(this).setTitle("Chuẩn bị mẫu tin")
-            .setMessage("Hỗ trợ {ten}, {gio}, {ngay}. Tên chỉ dùng trong bản nháp cục bộ.")
-            .setView(recipient).setNegativeButton("Hủy", null)
-            .setPositiveButton("Xem trước", (dialog, which) -> {
-                String name = recipient.getText().toString().trim();
-                if (name.isEmpty()) name = "bạn";
-                if (name.codePointCount(0, name.length()) > 160) {
-                    status.setText("Tên người nhận quá dài."); return;
-                }
-                java.util.Date now = new java.util.Date();
-                String time = new java.text.SimpleDateFormat("HH:mm", Locale.ROOT).format(now);
-                String date = new java.text.SimpleDateFormat("dd/MM/yyyy", Locale.ROOT).format(now);
-                String text = nativeExpandTemplate(template, name, time, date);
-                if (text == null) { status.setText("Không tạo được bản xem trước."); return; }
-                new AlertDialog.Builder(this).setTitle("Xem trước • " + name)
-                    .setMessage(text).setNegativeButton("Hủy", null)
-                    .setPositiveButton("Chèn vào bản nháp", (confirm, choice) -> {
-                        draft.append((draft.length() == 0 ? "" : "\n") + text);
-                        status.setText("Đã chèn mẫu. Bản thử chưa gửi tin qua Zalo.");
-                    }).show();
-            }).show();
+        EditText recipient=new EditText(this);recipient.setSingleLine(true);recipient.setHint("Tên người nhận để thay {ten}");
+        showTemplateDialog(new AlertDialog.Builder(this).setTitle("Chuẩn bị mẫu tin").setView(recipient).setNegativeButton("Hủy",null).setPositiveButton("Xem trước",(dialog,which)->previewExpandedTemplate(template,recipient.getText().toString(),text->draft.append((draft.length()==0?"":"\n")+text))));
     }
 
     private void editTemplate(int position) {
-        if (position < 0 && templates.size() >= MAX_TEMPLATES) {
-            Toast.makeText(this, "Đã đủ 100 mẫu cục bộ", Toast.LENGTH_SHORT).show();
-            return;
-        }
-        EditText text = new EditText(this);
-        text.setSingleLine(true);
-        if (position >= 0) text.setText(templates.get(position));
-        new AlertDialog.Builder(this)
-            .setTitle(position < 0 ? "Tạo mẫu" : "Sửa mẫu")
-            .setView(text)
-            .setNegativeButton("Hủy", null)
-            .setPositiveButton("Lưu", (dialog, which) -> {
-                String normalized = nativeNormalizeTemplate(text.getText().toString());
-                if (normalized == null) {
-                    Toast.makeText(this, "Mẫu phải có 1–120 ký tự hợp lệ", Toast.LENGTH_SHORT).show();
-                    return;
-                }
-                if (position < 0) templates.add(normalized); else templates.set(position, normalized);
-                saveTemplates();
-                renderTemplates();
-            }).show();
+        if(!templatesReady||templatesSaving){Toast.makeText(this,"Kho mẫu chưa sẵn sàng hoặc đang lưu.",Toast.LENGTH_SHORT).show();return;}
+        if(position<0&&templates.size()>=MAX_TEMPLATES){Toast.makeText(this,"Bản thử hiện hỗ trợ 100 mẫu; không phải hạn mức Zalo.",Toast.LENGTH_LONG).show();return;}
+        if(position>=templates.size())return;
+        final long revision=templateRevision;
+        EditText text=new EditText(this);text.setMinLines(2);text.setMaxLines(5);text.setHint("Nội dung mẫu, hỗ trợ {ten}, {gio}, {ngay}");
+        if(position>=0)text.setText(templates.get(position));
+        AlertDialog editor=showTemplateDialog(new AlertDialog.Builder(this).setTitle(position<0?"Tạo mẫu":"Sửa mẫu").setView(text).setNegativeButton("Hủy",null).setPositiveButton("Lưu",null));
+        editor.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(v->{
+            String normalized=nativeNormalizeTemplate(text.getText().toString());
+            if(normalized==null){text.setError("Mẫu phải có 1–120 ký tự hợp lệ.");return;}
+            if(revision!=templateRevision){text.setError("Kho mẫu đã thay đổi. Hãy mở lại mẫu.");return;}
+            ArrayList<String> next=new ArrayList<>(templates);if(position<0)next.add(normalized);else next.set(position,normalized);
+            editor.getButton(AlertDialog.BUTTON_POSITIVE).setEnabled(false);
+            persistTemplates(next,ok->{if(ok)editor.dismiss();else{editor.getButton(AlertDialog.BUTTON_POSITIVE).setEnabled(true);text.setError("Không lưu được. Bản nhập vẫn ở đây; hãy thử mở lại kho.");}});
+        });
     }
 
     private String displayName(Uri uri) {

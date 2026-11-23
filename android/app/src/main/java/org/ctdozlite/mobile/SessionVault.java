@@ -17,7 +17,13 @@ final class SessionVault {
     private final AtomicFile file;
     private final String alias;
     SessionVault(Context context) { this(context,"zalite.session.v1","session-vault.bin"); }
-    private SessionVault(Context context,String alias,String name) { this.alias=alias;file=new AtomicFile(new File(context.getNoBackupFilesDir(),name)); }
+    static SessionVault templates(Context context) { return new SessionVault(context,"zalite.templates.v1","templates-vault.bin"); }
+    static SessionVault templateSelfTest(Context context) { return new SessionVault(context,"zalite.templates.selftest","templates-vault-selftest.bin"); }
+    void deleteSelfTest() throws Exception {
+        if(!alias.endsWith(".selftest"))throw new IOException("Not a test vault");
+        synchronized(IO_LOCK){file.delete();KeyStore store=KeyStore.getInstance("AndroidKeyStore");store.load(null);store.deleteEntry(alias);}
+    }
+    private SessionVault(Context context,String alias,String name) { this.alias=alias;File directory=context.getNoBackupFilesDir();if(directory==null)throw new IllegalStateException("Private storage unavailable");file=new AtomicFile(new File(directory,name)); }
     private SecretKey key() throws Exception {
         KeyStore store=KeyStore.getInstance("AndroidKeyStore");store.load(null);
         if(store.containsAlias(alias)) return (SecretKey)store.getKey(alias,null);

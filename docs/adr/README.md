@@ -49,5 +49,6 @@ What we will do, in one paragraph, present tense.
 | [0012](0012-shared-recent-conversation-projection.md) | Shared preview transport and bounded mobile projection | Prototype testing |
 | [0013](0013-android-session-lifecycle.md) | Preserve completed Sessions across Activity lifecycle | Prototype testing |
 | [0014](0014-shared-text-send-intents.md) | Shared text transport and explicit mobile send intents | Prototype testing |
+| [0015](0015-android-composer-template-vault.md) | Active-composer templates and protected local library | Prototype testing |
 
 Related domain language lives in [`/GLOSSARY.md`](../../GLOSSARY.md).

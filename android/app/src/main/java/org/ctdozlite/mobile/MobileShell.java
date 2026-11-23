@@ -10,6 +10,7 @@ import android.widget.*;
 /** Mobile navigation and local draft workspace. Never represents fixture chats as live data. */
 final class MobileShell {
     interface SendActions {
+        void template(String recipient,java.util.function.Consumer<String> insert);
         void request(String account,String target,boolean group,String name,String text,java.util.function.Consumer<org.json.JSONObject> done);
         void status(String account,String target,boolean group,java.util.function.Consumer<org.json.JSONObject> done);
     }
@@ -24,6 +25,7 @@ final class MobileShell {
     private String conversationAccount="";
     private String searchQuery="";
     private String activeConversationKey="";
+    private long composerGeneration;
     void clearRecent(){conversations=new org.json.JSONArray();drafts.clear();demo=false;limited=false;conversationAccount="";searchQuery="";selected=0;if(root!=null)show();}
     void setRecentLoading(boolean loading) { recentLoading=loading;if(selected==0&&!inConversation&&body!=null)select(0); }
     void acceptRecent(org.json.JSONObject data,boolean isDemo) {
@@ -47,7 +49,11 @@ final class MobileShell {
     private GradientDrawable background(int color, int radius) {
         GradientDrawable shape = new GradientDrawable(); shape.setColor(color); shape.setCornerRadius(dp(radius)); return shape;
     }
+    private ImageButton icon(int kind,String description,int color,Runnable action) {
+        ImageButton button=new ImageButton(activity);button.setImageDrawable(new MobileIcon(kind));button.setColorFilter(color);button.setBackgroundColor(Color.TRANSPARENT);button.setPadding(dp(12),dp(12),dp(12),dp(12));button.setContentDescription(description);button.setTooltipText(description);button.setOnClickListener(v->action.run());return button;
+    }
     void show() {
+        composerGeneration++;
         inConversation=false;
         root = new LinearLayout(activity); root.setOrientation(LinearLayout.VERTICAL); root.setBackgroundColor(Color.WHITE);
         root.setOnApplyWindowInsetsListener((view, insets) -> {
@@ -59,8 +65,9 @@ final class MobileShell {
         LinearLayout header = new LinearLayout(activity); header.setGravity(Gravity.CENTER_VERTICAL); header.setPadding(dp(16),dp(8),dp(12),dp(8)); header.setBackgroundColor(blue);
         EditText search = new EditText(activity); search.setSingleLine(true); search.setTextSize(16); search.setHint("Tìm kiếm"); search.setHintTextColor(0xffd9eaff); search.setTextColor(Color.WHITE); search.setBackgroundColor(Color.TRANSPARENT);
         search.setText(searchQuery);
+        ImageView magnifier=new ImageView(activity);magnifier.setImageDrawable(new MobileIcon(5));magnifier.setColorFilter(Color.WHITE);header.addView(magnifier,new LinearLayout.LayoutParams(dp(24),dp(24)));
         header.addView(search, new LinearLayout.LayoutParams(0,dp(44),1));
-        TextView add = text("+",30,Color.WHITE); add.setGravity(Gravity.CENTER); add.setContentDescription("Mở tiện ích cục bộ"); add.setOnClickListener(v -> tools.run()); header.addView(add,new LinearLayout.LayoutParams(dp(44),dp(44)));
+        header.addView(icon(6,"Mở tiện ích cục bộ",Color.WHITE,tools),new LinearLayout.LayoutParams(dp(48),dp(48)));
         root.addView(header);
         TextView notice = text(localSessionLabel,12,0xff526479); connectionNote=notice; notice.setPadding(dp(16),dp(8),dp(16),dp(8)); notice.setBackgroundColor(0xffeef5ff); root.addView(notice);
         body = new LinearLayout(activity); body.setOrientation(LinearLayout.VERTICAL); root.addView(body,new LinearLayout.LayoutParams(-1,0,1));
@@ -80,6 +87,7 @@ final class MobileShell {
         select(selected);
     }
     private void select(int index) {
+        composerGeneration++;
         inConversation=false;
         selected=index; body.removeAllViews();
         for(int i=0;i<navigation.getChildCount();i++) {
@@ -87,8 +95,9 @@ final class MobileShell {
         }
         if(index==0) {
             LinearLayout filters=new LinearLayout(activity); filters.setPadding(dp(16),dp(14),dp(16),dp(14));
-            TextView all=text("Tất cả",16,blue); all.setTypeface(null,Typeface.BOLD); filters.addView(all); TextView unread=text("Chưa đọc",16,muted); unread.setPadding(dp(24),0,0,0); filters.addView(unread); body.addView(filters);
-            Button reload=new Button(activity);reload.setText(recentLoading?"Đang tải…":"Tải tin gần đây");reload.setAllCaps(false);reload.setEnabled(!recentLoading);reload.setOnClickListener(v->refresh.run());body.addView(reload);
+            filters.setGravity(Gravity.CENTER_VERTICAL);filters.setPadding(dp(16),0,dp(4),0);
+            TextView all=text("Tất cả",16,blue); all.setTypeface(null,Typeface.BOLD); filters.addView(all,new LinearLayout.LayoutParams(0,dp(48),1));all.setGravity(Gravity.CENTER_VERTICAL);
+            ImageButton reload=icon(13,recentLoading?"Đang tải tin gần đây":"Tải tin gần đây",blue,refresh);reload.setEnabled(!recentLoading);filters.addView(reload,new LinearLayout.LayoutParams(dp(48),dp(48)));body.addView(filters);
             if(conversations.length()>0)renderConversations();
             else {
                 empty("Tin nhắn của bạn", "Kết nối tài khoản bằng mã QR thiết bị đồng hành.", "Đăng nhập bằng QR", login);
@@ -117,9 +126,10 @@ final class MobileShell {
     }
     private String time(long ts){return ts<=0?"":new java.text.SimpleDateFormat("HH:mm",java.util.Locale.ROOT).format(new java.util.Date(ts));}
     private void openConversation(org.json.JSONObject entry){
+        final long composition=++composerGeneration;
         inConversation=true;activeConversationKey=(entry.optBoolean("group")?"g:":"u:")+entry.optString("id");root.removeAllViews();
         LinearLayout header=new LinearLayout(activity);header.setGravity(Gravity.CENTER_VERTICAL);header.setPadding(dp(8),dp(8),dp(12),dp(8));header.setBackgroundColor(blue);
-        Button back=new Button(activity);back.setText("‹");back.setOnClickListener(v->show());header.addView(back,new LinearLayout.LayoutParams(dp(48),dp(48)));
+        header.addView(icon(7,"Về danh sách tin nhắn",Color.WHITE,this::show),new LinearLayout.LayoutParams(dp(48),dp(48)));
         LinearLayout title=new LinearLayout(activity);title.setOrientation(LinearLayout.VERTICAL);title.addView(text(entry.optString("name"),18,Color.WHITE));title.addView(text(demo?"Dữ liệu thử • không kết nối Zalo":"Gửi thử nghiệm • cần xác nhận mỗi tin",11,0xffdbeaff));header.addView(title,new LinearLayout.LayoutParams(0,-2,1));root.addView(header);
         ScrollView scroll=new ScrollView(activity);scroll.setBackgroundColor(0xffeaf0f6);LinearLayout messages=new LinearLayout(activity);messages.setOrientation(LinearLayout.VERTICAL);messages.setPadding(dp(12),dp(16),dp(12),dp(16));scroll.addView(messages);root.addView(scroll,new LinearLayout.LayoutParams(-1,0,1));
         org.json.JSONArray rows=entry.optJSONArray("messages");if(rows!=null)for(int i=0;i<rows.length();i++){
@@ -130,14 +140,24 @@ final class MobileShell {
             if(message.has("send_state"))bubble.addView(text(SendStatus.describe(message.optString("send_state")),10,muted));
         }
         scroll.post(()->scroll.fullScroll(android.view.View.FOCUS_DOWN));
-        LinearLayout toolbar=new LinearLayout(activity);Button gif=new Button(activity);gif.setText("GIF");gif.setAllCaps(false);gif.setContentDescription("Thư viện GIF và sticker cá nhân");gif.setOnClickListener(v->tools.run());toolbar.addView(gif,new LinearLayout.LayoutParams(0,dp(48),1));Button quick=new Button(activity);quick.setText("Mẫu tin");quick.setAllCaps(false);quick.setOnClickListener(v->tools.run());toolbar.addView(quick,new LinearLayout.LayoutParams(0,dp(48),1));root.addView(toolbar);
+        LinearLayout toolbar=new LinearLayout(activity);toolbar.setGravity(Gravity.CENTER_VERTICAL);toolbar.setPadding(dp(4),0,dp(4),0);toolbar.setBackgroundColor(0xfff7f9fc);
+        ImageButton gif=icon(15,"GIF và sticker cá nhân",blue,tools);toolbar.addView(gif,new LinearLayout.LayoutParams(dp(48),dp(48)));
+        ImageButton quick=icon(14,"Mẫu tin nhanh",blue,tools);toolbar.addView(quick,new LinearLayout.LayoutParams(dp(48),dp(48)));root.addView(toolbar);
         String key=(entry.optBoolean("group")?"g:":"u:")+entry.optString("id");
         final boolean demoChat=demo;final String account=conversationAccount;
-        LinearLayout composer=new LinearLayout(activity);composer.setGravity(Gravity.CENTER_VERTICAL);
-        EditText input=new EditText(activity);input.setMinLines(2);input.setMaxLines(5);input.setFilters(new android.text.InputFilter[]{new android.text.InputFilter.LengthFilter(4000)});input.setHint(demoChat?"Nhập tin thử…":"Nhập tin nhắn…");input.setText(drafts.getOrDefault(key,""));composer.addView(input,new LinearLayout.LayoutParams(0,-2,1));
-        Button send=new Button(activity);send.setAllCaps(false);send.setText(demoChat?"Thử gửi":"Gửi");composer.addView(send,new LinearLayout.LayoutParams(dp(80),dp(48)));root.addView(composer);
+        LinearLayout composer=new LinearLayout(activity);composer.setGravity(Gravity.CENTER_VERTICAL);composer.setPadding(dp(4),dp(4),dp(4),dp(4));
+        EditText input=new EditText(activity);input.setTextSize(16);input.setPadding(dp(12),dp(10),dp(12),dp(10));input.setBackground(background(0xfff1f4f8,20));input.setMinLines(2);input.setMaxLines(5);input.setFilters(new android.text.InputFilter[]{new android.text.InputFilter.LengthFilter(4000)});input.setHint(demoChat?"Nhập tin thử…":"Tin nhắn");input.setText(drafts.getOrDefault(key,""));composer.addView(input,new LinearLayout.LayoutParams(0,-2,1));
+        ImageButton send=icon(12,demoChat?"Gửi tin thử trên máy":"Gửi tin nhắn",blue,()->{});composer.addView(send,new LinearLayout.LayoutParams(dp(48),dp(48)));root.addView(composer);
+        toolbar.addView(icon(9,"Chèn biểu cảm",muted,()->new android.app.AlertDialog.Builder(activity).setTitle("Biểu cảm").setItems(new String[]{"😊","❤️","👍","😂","🎉","🙏"},(dialog,which)->{String value=new String[]{"😊","❤️","👍","😂","🎉","🙏"}[which];int start=Math.max(0,input.getSelectionStart()),end=Math.max(start,input.getSelectionEnd());input.getText().replace(start,end,value);}).setNegativeButton("Đóng",null).show()),new LinearLayout.LayoutParams(dp(48),dp(48)));
         TextView result=text(demoChat?SendStatus.describe("local_demo"):"Gửi thử nghiệm chưa được kiểm chứng bằng tài khoản thật",11,muted);result.setPadding(dp(12),dp(4),dp(12),dp(6));root.addView(result);
-        Button check=new Button(activity);check.setAllCaps(false);check.setText("Trạng thái");check.setContentDescription("Trạng thái lượt gửi");toolbar.addView(check,new LinearLayout.LayoutParams(0,dp(48),1));
+        quick.setOnClickListener(v->{
+            String expected=input.getText().toString();int start=Math.max(0,input.getSelectionStart()),end=Math.max(start,input.getSelectionEnd());
+            sends.template(entry.optString("name"),expanded->{
+                if(!inConversation||composition!=composerGeneration||!activeConversationKey.equals(key)||!conversationAccount.equals(account)||demo!=demoChat)return;
+                try{String merged=TemplateComposer.insert(input.getText().toString(),expected,expanded,start,end);input.setText(merged);input.setSelection(start+expanded.length());result.setText("Đã chèn mẫu vào bản nháp • chưa gửi");}catch(IllegalArgumentException error){result.setText(error.getMessage());}
+            });
+        });
+        ImageButton check=icon(8,"Trạng thái lượt gửi",muted,()->{});toolbar.addView(check,new LinearLayout.LayoutParams(dp(48),dp(48)));
         check.setOnClickListener(v->{if(demoChat)result.setText(SendStatus.describe("local_demo"));else sends.status(account,entry.optString("id"),entry.optBoolean("group"),value->{String phase=value.optString("phase");result.setText(value.optString("message",SendStatus.describe(phase)));send.setEnabled(!phase.equals("sending"));if(SendStatus.canClearDraft(input.getText().toString(),value.optString("text"),phase)){drafts.remove(key);input.setText("");}});});
         input.addTextChangedListener(new android.text.TextWatcher(){public void beforeTextChanged(CharSequence s,int st,int c,int a){}public void onTextChanged(CharSequence s,int st,int b,int c){drafts.put(key,s.toString());}public void afterTextChanged(android.text.Editable e){}});
         send.setOnClickListener(v->{
