@@ -1947,7 +1947,7 @@ pub async fn send_attachment_ext(
     let is_video = matches!(ext.as_str(), "mp4" | "mov" | "mkv" | "webm" | "avi");
 
     let file_host = if s.domains.file.is_empty() {
-        "https://tt-files-wpa.zaloapp.com"
+        crate::endpoints::PHOTO_FILE_FALLBACK
     } else {
         s.domains.file.trim_end_matches('/')
     };
@@ -1976,142 +1976,30 @@ pub async fn send_attachment_ext(
             "bmp" => "image/bmp",
             _ => "image/jpeg",
         };
-        let upload_ep = if is_group {
-            "/api/group/photo_original/upload"
-        } else {
-            "/api/message/photo_original/upload"
-        };
-
-        let mut last_up_dec = Value::Null;
-        for (idx, chunk) in file_bytes.chunks(chunk_size).enumerate() {
-            let chunk_id = idx + 1;
-            let mut m = serde_json::Map::new();
-            m.insert("totalChunk".into(), json!(total_chunks));
-            m.insert("fileName".into(), json!(file_name));
-            m.insert("clientId".into(), json!(client_id));
-            m.insert("totalSize".into(), json!(total_size));
-            m.insert("imei".into(), json!(s.imei));
-            m.insert("isE2EE".into(), json!(0));
-            m.insert("jxl".into(), json!(0));
-            m.insert("chunkId".into(), json!(chunk_id));
-            if is_group {
-                m.insert("grid".into(), json!(clean_target));
-            } else {
-                m.insert("toid".into(), json!(clean_target));
-            }
-            let params = s.encoded_params(&Value::Object(m))?;
-            let url = format!(
-                "{file_host}{upload_ep}?{}&params={params}&type={target_type}",
-                s.common_params()
-            );
-            let up_raw = s
-                .post_multipart(&url, "chunkContent", &file_name, mime, chunk)
-                .await?;
-            last_up_dec = s.maybe_decrypt(up_raw, s.session_key_bytes()).await;
-        }
-
-        let data_node = last_up_dec.get("data").unwrap_or(&last_up_dec);
-        let photo_id = pick_str(data_node, &["photoId", "clientFileId"]);
-        let normal_url =
-            pick_str(data_node, &["normalUrl", "hdUrl", "oriUrl", "url"]).unwrap_or_default();
-        let hd_url = pick_str(data_node, &["hdUrl", "normalUrl", "oriUrl"])
-            .unwrap_or_else(|| normal_url.clone());
-        let ori_url = pick_str(data_node, &["oriUrl", "hdUrl", "normalUrl"])
-            .unwrap_or_else(|| normal_url.clone());
-        let thumb_url = pick_str(data_node, &["thumbUrl", "normalUrl", "hdUrl"])
-            .unwrap_or_else(|| normal_url.clone());
-
-        let send_resp = if let Some(pid) = photo_id.filter(|_| !normal_url.is_empty()) {
-            let send_ep = if is_group {
-                "/api/group/photo_original/send"
-            } else {
-                "/api/message/photo_original/send"
-            };
-            let pid_val = pid
-                .parse::<u64>()
-                .map(|n| json!(n))
-                .unwrap_or_else(|_| json!(pid));
-            let mut send_obj = serde_json::Map::new();
-            send_obj.insert("photoId".into(), pid_val);
-            send_obj.insert("clientId".into(), json!(client_id));
-            send_obj.insert("desc".into(), json!(caption));
-            send_obj.insert("width".into(), json!(width));
-            send_obj.insert("height".into(), json!(height));
-            send_obj.insert("rawUrl".into(), json!(normal_url));
-            send_obj.insert("hdUrl".into(), json!(hd_url));
-            send_obj.insert("thumbUrl".into(), json!(thumb_url));
-            send_obj.insert(
-                "oriUrl".into(),
-                json!(if is_original_hd {
-                    &ori_url
-                } else {
-                    &normal_url
-                }),
-            );
-            send_obj.insert("normalUrl".into(), json!(normal_url));
-            send_obj.insert(
-                "hdSize".into(),
-                json!(if is_original_hd { total_size } else { 0 }),
-            );
-            send_obj.insert("isHD".into(), json!(if is_original_hd { 1 } else { 0 }));
-            send_obj.insert("hd".into(), json!(if is_original_hd { 1 } else { 0 }));
-            send_obj.insert(
-                "isOriginal".into(),
-                json!(if is_original_hd { 1 } else { 0 }),
-            );
-            send_obj.insert("zsource".into(), json!(-1));
-            send_obj.insert("jcp".into(), json!("{\"convertible\":true}"));
-            send_obj.insert("imei".into(), json!(s.imei));
-            if is_group {
-                send_obj.insert("grid".into(), json!(clean_target));
-                send_obj.insert("visibility".into(), json!(0));
-            } else {
-                send_obj.insert("toid".into(), json!(clean_target));
-            }
-            let params = s.encoded_params(&Value::Object(send_obj))?;
-            let url = format!("{file_host}{send_ep}?{}", s.common_params());
-            let r = s.post_form(&url, format!("params={params}")).await?;
-            s.maybe_decrypt(r, s.session_key_bytes()).await
-        } else {
-            // Fallback: single-shot `/api/message/photo` or `/api/group/sendpt`
-            let single_ep = if is_group {
-                "/api/group/sendpt"
-            } else {
-                "/api/message/photo"
-            };
-            let mut body_obj = serde_json::Map::new();
-            body_obj.insert("clientId".into(), json!(client_id));
-            body_obj.insert("desc".into(), json!(caption));
-            body_obj.insert("width".into(), json!(width));
-            body_obj.insert("height".into(), json!(height));
-            body_obj.insert("imei".into(), json!(s.imei));
-            if is_group {
-                body_obj.insert("grid".into(), json!(clean_target));
-                body_obj.insert("visibility".into(), json!(0));
-            } else {
-                body_obj.insert("toid".into(), json!(clean_target));
-            }
-            let params = s.encoded_params(&Value::Object(body_obj))?;
-            let url = format!(
-                "{file_host}{single_ep}?{}&params={params}&type={target_type}",
-                s.common_params()
-            );
-            let r = s
-                .post_multipart(&url, "fileContent", &file_name, mime, &file_bytes)
-                .await?;
-            s.maybe_decrypt(r, s.session_key_bytes()).await
-        };
-
-        if let Some(code) = send_resp.get("error_code").and_then(Value::as_i64) {
-            if code != 0 {
-                let msg = send_resp
-                    .get("error_message")
-                    .and_then(Value::as_str)
-                    .unwrap_or("unknown");
-                return Err(crate::session::SessionError::new(code, msg).into());
-            }
-        }
-
+        let receipt = crate::photo_transport::send_photo(
+            s,
+            to_id,
+            is_group,
+            &crate::photo_transport::PhotoInput {
+                bytes: &file_bytes,
+                file_name: &file_name,
+                mime,
+                caption,
+                width,
+                height,
+                original: is_original_hd,
+            },
+            client_id,
+            crate::photo_transport::PhotoPolicy::DesktopCompatibility,
+        )
+        .await?;
+        let crate::photo_transport::PhotoReceipt {
+            response: send_resp,
+            normal_url,
+            hd_url,
+            original_url: ori_url,
+            thumbnail_url: thumb_url,
+        } = receipt;
         let final_thumb = if !thumb_url.is_empty() {
             thumb_url
         } else {
@@ -2393,6 +2281,82 @@ fn read_attachment_bounded(path: &std::path::Path) -> Result<Vec<u8>> {
 #[cfg(test)]
 mod attachment_limit_tests {
     use super::*;
+
+    #[tokio::test]
+    async fn rejected_photo_upload_never_attempts_fallback_dispatch() {
+        use std::io::{Read, Write};
+        use std::sync::{
+            atomic::{AtomicBool, Ordering},
+            Arc,
+        };
+        use std::time::{Duration, Instant};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        listener.set_nonblocking(true).unwrap();
+        let host = format!("http://{}", listener.local_addr().unwrap());
+        let stop = Arc::new(AtomicBool::new(false));
+        let worker_stop = stop.clone();
+        let server = std::thread::spawn(move || {
+            let deadline = Instant::now() + Duration::from_secs(8);
+            let mut count = 0;
+            while !worker_stop.load(Ordering::Acquire) && Instant::now() < deadline {
+                let (mut stream, _) = match listener.accept() {
+                    Ok(value) => value,
+                    Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                        std::thread::sleep(Duration::from_millis(5));
+                        continue;
+                    }
+                    Err(error) => panic!("{error}"),
+                };
+                stream.set_nonblocking(false).unwrap();
+                stream
+                    .set_read_timeout(Some(Duration::from_secs(2)))
+                    .unwrap();
+                let mut header = Vec::new();
+                while !header.ends_with(b"\r\n\r\n") {
+                    let mut byte = [0];
+                    stream.read_exact(&mut byte).unwrap();
+                    header.push(byte[0]);
+                    assert!(header.len() < 16384);
+                }
+                let header = String::from_utf8(header).unwrap();
+                let size: usize = header
+                    .lines()
+                    .find_map(|line| {
+                        let (key, value) = line.split_once(':')?;
+                        key.eq_ignore_ascii_case("content-length")
+                            .then(|| value.trim().parse().unwrap())
+                    })
+                    .unwrap();
+                assert!(size < 16384);
+                let mut body = vec![0; size];
+                stream.read_exact(&mut body).unwrap();
+                count += 1;
+                let response = r#"{"error_code":114,"error_message":"synthetic rejection"}"#;
+                write!(stream,"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nConnection: close\r\nContent-Length: {}\r\n\r\n{}",response.len(),response).unwrap();
+            }
+            count
+        });
+        let path =
+            std::env::temp_dir().join(format!("photo-rejection-{}.gif", next_client_message_id()));
+        std::fs::write(&path, include_bytes!("../docs/verification/sample-1x1.gif")).unwrap();
+        let mut session = Session::new(false, false, false).unwrap();
+        session.login = Some(crate::session::LoginInfo::default());
+        session.secret_key = Some(vec![7; 32]);
+        session.domains.file = host;
+        let result = tokio::time::timeout(
+            Duration::from_secs(5),
+            send_attachment(&session, "200", false, &path, ""),
+        )
+        .await;
+        stop.store(true, Ordering::Release);
+        let count = server.join().unwrap();
+        std::fs::remove_file(path).unwrap();
+        assert!(result.unwrap().is_err());
+        assert_eq!(
+            count, 1,
+            "upload rejection must not trigger a second dispatch"
+        );
+    }
 
     #[test]
     fn oversized_attachment_is_rejected_before_reading() {

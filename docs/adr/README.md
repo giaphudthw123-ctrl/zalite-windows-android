@@ -52,5 +52,6 @@ What we will do, in one paragraph, present tense.
 | [0015](0015-android-composer-template-vault.md) | Active-composer templates and protected local library | Prototype testing |
 | [0016](0016-android-capture-protection.md) | Android Activity/dialog capture protection and local preference | Prototype testing |
 | [0017](0017-android-gif-composer-selection.md) | In-chat GIF selection and bounded content-addressed files | Prototype testing |
+| [0018](0018-shared-photo-upload-dispatch.md) | Shared photo upload/dispatch and explicit companion policy | Prototype testing |
 
 Related domain language lives in [`/GLOSSARY.md`](../../GLOSSARY.md).

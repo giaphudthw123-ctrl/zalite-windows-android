@@ -1193,7 +1193,14 @@ impl Session {
         mime_type: &str,
         file_bytes: &[u8],
     ) -> Result<Value> {
-        if !is_trusted_zalo_url(url) {
+        let trusted = is_trusted_zalo_url(url);
+        // Match ordinary unit-test requests: synthetic fixtures only, absent in production builds.
+        #[cfg(test)]
+        let trusted = trusted
+            || reqwest::Url::parse(url).ok().is_some_and(|parsed| {
+                parsed.scheme() == "http" && parsed.host_str() == Some("127.0.0.1")
+            });
+        if !trusted {
             bail!("Refusing authenticated multipart upload to an untrusted Zalo URL");
         }
 

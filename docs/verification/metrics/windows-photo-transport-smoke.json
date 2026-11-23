@@ -1,0 +1,17 @@
+{
+  "date": "2026-11-23T20:18:29.8734327+07:00",
+  "platform": "Windows",
+  "pid": 8544,
+  "workload": "Fresh isolated unauthenticated GUI; process-local proxy localhost:9; no QR observed or account login",
+  "exeBytes": 83052268,
+  "exeSha256": "9988979C4A53A3DE70B4AC2DF5E82741E4297047C478CFF00A3BA169BB2B6FE4",
+  "workingSetBytes": 105381888,
+  "privateMemoryBytes": 47378432,
+  "cpuSecondsStart": 1.9375,
+  "cpuSecondsEnd": 2.03125,
+  "elapsedSeconds": 20.0226873,
+  "oneCoreCpuPercent": 0.4682188689027771,
+  "isolatedStorageBytes": 77824.0,
+  "networkBytes": null,
+  "limitations": "No real-account send, equivalent official-client baseline or network-byte measurement."
+}

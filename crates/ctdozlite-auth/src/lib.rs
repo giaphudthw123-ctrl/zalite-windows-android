@@ -15,6 +15,10 @@ pub mod login;
 pub mod outgoing;
 #[path = "../../../src/param_cipher.rs"]
 pub mod param_cipher;
+#[path = "../../../src/photo_transport.rs"]
+pub mod photo_transport;
+#[cfg(test)]
+mod photo_contract;
 #[path = "../../../src/protocol_identity.rs"]
 pub mod protocol_identity;
 #[path = "../../../src/qr.rs"]

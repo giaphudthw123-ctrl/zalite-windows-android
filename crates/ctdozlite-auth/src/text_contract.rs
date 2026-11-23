@@ -26,6 +26,7 @@ async fn encrypted_text_posts_preserve_target_properties_and_ids_and_report_erro
                 }
                 Err(error) => panic!("fixture accept: {error}"),
             };
+            stream.set_nonblocking(false).unwrap();
             stream
                 .set_read_timeout(Some(Duration::from_secs(3)))
                 .unwrap();

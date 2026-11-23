@@ -30,6 +30,8 @@ pub const CONVERS_CTL: &str = "https://p5-ctl-chat.zaloapp.com";
 pub const MSG_CHAT: &str = "https://p5-msg-chat.zaloapp.com";
 /// Existing desktop text-send fallback, shared with the Android companion transport.
 pub const TEXT_SEND_FALLBACK: &str = "https://tt-chat3-wpa.api.zaloapp.com";
+/// Existing desktop file-upload fallback, also used by the portable photo transport.
+pub const PHOTO_FILE_FALLBACK: &str = "https://tt-files-wpa.zaloapp.com";
 
 /// Auth host for `reqqr` / password login.
 pub const AUTH: &str = "https://wpa.zaloapp.com";
