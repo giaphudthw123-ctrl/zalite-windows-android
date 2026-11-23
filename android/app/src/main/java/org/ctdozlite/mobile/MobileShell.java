@@ -16,6 +16,9 @@ final class MobileShell {
     private final String[] labels = {"Tin nhắn", "Danh bạ", "Khám phá", "Nhật ký", "Cá nhân"};
     private LinearLayout root, body, navigation;
     private int selected;
+    private String localSessionLabel = "Zalite • chưa kết nối tài khoản Zalo";
+    private TextView connectionNote;
+    void setLocalSessionLabel(String value) { localSessionLabel=value; if(connectionNote!=null)connectionNote.setText(value); }
     MobileShell(Activity activity, Runnable tools, Runnable login) { this.activity = activity; this.tools = tools; this.login = login; }
     private int dp(int n) { return Math.round(n * activity.getResources().getDisplayMetrics().density); }
     private TextView text(String value, int size, int color) {
@@ -37,7 +40,7 @@ final class MobileShell {
         header.addView(search, new LinearLayout.LayoutParams(0,dp(44),1));
         TextView add = text("+",30,Color.WHITE); add.setGravity(Gravity.CENTER); add.setContentDescription("Mở tiện ích cục bộ"); add.setOnClickListener(v -> tools.run()); header.addView(add,new LinearLayout.LayoutParams(dp(44),dp(44)));
         root.addView(header);
-        TextView notice = text("Zalite • chưa kết nối tài khoản Zalo",12,0xff526479); notice.setPadding(dp(16),dp(8),dp(16),dp(8)); notice.setBackgroundColor(0xffeef5ff); root.addView(notice);
+        TextView notice = text(localSessionLabel,12,0xff526479); connectionNote=notice; notice.setPadding(dp(16),dp(8),dp(16),dp(8)); notice.setBackgroundColor(0xffeef5ff); root.addView(notice);
         body = new LinearLayout(activity); body.setOrientation(LinearLayout.VERTICAL); root.addView(body,new LinearLayout.LayoutParams(-1,0,1));
         navigation = new LinearLayout(activity); navigation.setPadding(0,dp(4),0,dp(4)); root.addView(navigation,new LinearLayout.LayoutParams(-1,dp(64)));
         for(int i=0;i<labels.length;i++) {

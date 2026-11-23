@@ -913,10 +913,20 @@ impl Session {
 
     /// Load a previously saved session from disk and restore cookies, keys, and endpoints.
     pub fn load_from_file(&mut self, path: &str) -> Result<()> {
-        use base64::Engine;
         crate::data_dir::ensure_private_file(std::path::Path::new(path))?;
         let bytes = crate::session_storage::read(std::path::Path::new(path))?;
-        let saved: SavedSession = serde_json::from_slice(&bytes)?;
+        self.restore_from_secure_storage(&bytes)
+    }
+
+    /// Restore plaintext bytes supplied by an OS-protected adapter, without a temporary file.
+    /// Call on a fresh Session when failure must preserve an existing live Session.
+    ///
+    /// # Errors
+    /// Rejects oversized/malformed data or untrusted cookie destinations.
+    pub fn restore_from_secure_storage(&mut self, bytes: &[u8]) -> Result<()> {
+        use base64::Engine;
+        anyhow::ensure!(bytes.len() <= 8 * 1024 * 1024, "Tệp phiên quá lớn");
+        let saved: SavedSession = serde_json::from_slice(bytes)?;
 
         if self.proxy_url.is_none() {
             if let Some(ref p) = saved.proxy_url {

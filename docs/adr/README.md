@@ -45,5 +45,6 @@ What we will do, in one paragraph, present tense.
 | [0008](0008-windows-session-protection.md) | Windows user-bound Session protection | Accepted for Windows prototype |
 | [0009](0009-portable-companion-auth.md) | Portable companion authentication sources | Accepted for prototype |
 | [0010](0010-android-qr-session-owner.md) | Android QR Session owner and Keystore output | Prototype testing only |
+| [0011](0011-android-local-session-restore.md) | Android local Session restoration | Prototype testing |
 
 Related domain language lives in [`/GLOSSARY.md`](../../GLOSSARY.md).

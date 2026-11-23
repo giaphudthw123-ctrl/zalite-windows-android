@@ -48,6 +48,7 @@ public final class MainActivity extends Activity {
     private native void nativeAuthCancel(long generation);
     private native String nativeAuthStatus(long generation);
     private native byte[] nativeAuthTake(long generation);
+    private native String nativeAuthRestore(byte[] bytes);
     private long authGeneration;
     private final android.os.Handler authHandler = new android.os.Handler(android.os.Looper.getMainLooper());
 
@@ -165,12 +166,33 @@ public final class MainActivity extends Activity {
         handleSharedGif(getIntent());
     }
 
+    @Override protected void onStart() {
+        super.onStart();
+        if(mobileShell!=null && authGeneration==0)restoreStoredSession();
+    }
     @Override protected void onStop() {
         super.onStop(); cancelAuth();
     }
     private void cancelAuth() {
         if(authGeneration!=0) nativeAuthCancel(authGeneration);
         authGeneration=0;authHandler.removeCallbacksAndMessages(null);
+    }
+    private void restoreStoredSession() {
+        new Thread(() -> {
+            byte[] bytes=null;
+            String label=null;
+            try {
+                SessionVault vault=new SessionVault(this);
+                if(!vault.exists())return;
+                bytes=vault.read();
+                org.json.JSONObject result=new org.json.JSONObject(nativeAuthRestore(bytes));
+                if(result.optString("phase").equals("restored_unverified")) label="Phiên trên máy: "+result.optString("name")+" • chưa xác minh máy chủ";
+                else if(!result.optString("phase").equals("busy")) label="Không khôi phục được phiên trên máy. Tệp cũ vẫn được giữ.";
+            } catch(Exception error) { label="Không mở được kho phiên bảo vệ. Tệp cũ vẫn được giữ."; }
+            finally { if(bytes!=null)Arrays.fill(bytes,(byte)0); }
+            final String message=label;
+            if(message!=null)runOnUiThread(()->{if(authGeneration==0&&!isFinishing()&&!isDestroyed())mobileShell.setLocalSessionLabel(message);});
+        },"session-vault-restore").start();
     }
     private void showLogin() {
         cancelAuth();

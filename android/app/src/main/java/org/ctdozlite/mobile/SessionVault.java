@@ -23,6 +23,7 @@ final class SessionVault {
         generator.init(new KeyGenParameterSpec.Builder(alias,KeyProperties.PURPOSE_ENCRYPT|KeyProperties.PURPOSE_DECRYPT).setBlockModes(KeyProperties.BLOCK_MODE_GCM).setEncryptionPaddings(KeyProperties.ENCRYPTION_PADDING_NONE).setKeySize(256).setRandomizedEncryptionRequired(true).build());
         return generator.generateKey();
     }
+    boolean exists() { return file.getBaseFile().exists() || new File(file.getBaseFile().getPath()+".bak").exists(); }
     synchronized void save(byte[] bytes) throws Exception {
         if(bytes==null||bytes.length==0||bytes.length>LIMIT-4096) throw new IOException("Invalid Session size");
         Cipher cipher=Cipher.getInstance("AES/GCM/NoPadding");cipher.init(Cipher.ENCRYPT_MODE,key());

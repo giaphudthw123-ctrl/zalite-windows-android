@@ -6,6 +6,29 @@ use jni::JNIEnv;
 mod auth;
 
 #[no_mangle]
+pub extern "system" fn Java_org_ctdozlite_mobile_MainActivity_nativeAuthRestore(
+    env: JNIEnv,
+    _this: JObject,
+    input: JByteArray,
+) -> jstring {
+    let result = if env
+        .get_array_length(&input)
+        .map_or(true, |size| size <= 0 || size > 8 * 1024 * 1024)
+    {
+        "{\"phase\":\"restore_error\"}".to_owned()
+    } else if let Ok(mut bytes) = env.convert_byte_array(input) {
+        let result = auth::restore(&bytes);
+        bytes.fill(0);
+        result
+    } else {
+        "{\"phase\":\"restore_error\"}".to_owned()
+    };
+    env.new_string(result)
+        .map(|s| s.into_raw())
+        .unwrap_or(std::ptr::null_mut())
+}
+
+#[no_mangle]
 pub extern "system" fn Java_org_ctdozlite_mobile_MainActivity_nativeAuthStart(
     _env: JNIEnv,
     _this: JObject,

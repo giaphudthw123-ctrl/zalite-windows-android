@@ -127,9 +127,75 @@ pub fn take(generation: u64) -> Option<Vec<u8>> {
         .and_then(|mut s| s.saved.take())
 }
 
+fn decode_saved(bytes: &[u8]) -> anyhow::Result<Session> {
+    let mut session = Session::new(false, false, false)?;
+    session.restore_from_secure_storage(bytes)?;
+    let login = session
+        .login
+        .as_ref()
+        .ok_or_else(|| anyhow::anyhow!("missing identity"))?;
+    anyhow::ensure!(
+        !login.uin.is_empty()
+            && login.uin.len() <= 64
+            && login.uin.bytes().all(|b| b.is_ascii_alphanumeric()),
+        "invalid identity"
+    );
+    anyhow::ensure!(session.expired_at.is_none(), "expired session");
+    anyhow::ensure!(
+        session
+            .secret_key
+            .as_ref()
+            .map_or(false, |key| key.len() == 32),
+        "invalid key"
+    );
+    Ok(session)
+}
+
+pub fn restore(bytes: &[u8]) -> String {
+    let Ok(session) = decode_saved(bytes) else {
+        return json!({"phase":"restore_error"}).to_string();
+    };
+    let name = session
+        .login
+        .as_ref()
+        .map(|login| login.display_name.chars().take(160).collect::<String>())
+        .unwrap_or_default();
+    let Ok(mut s) = state().lock() else {
+        return json!({"phase":"restore_error"}).to_string();
+    };
+    if s.active {
+        return json!({"phase":"busy"}).to_string();
+    }
+    s.generation += 1;
+    s.saved = None;
+    s.session = Some(session);
+    s.status = json!({"phase":"restored_unverified","name":name});
+    s.status.to_string()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn protected_adapter_restore_validates_without_network_or_files() {
+        let mut fixture = Session::new(false, false, false).unwrap();
+        fixture.secret_key = Some(vec![7; 32]);
+        fixture.set_zpw_sek("synthetic-token".into());
+        fixture.login = Some(ctdozlite_auth::session::LoginInfo {
+            uin: "10001".into(),
+            display_name: "Fixture".into(),
+            zpw_sek: "synthetic-token".into(),
+            ..Default::default()
+        });
+        let bytes = fixture.serialize_for_secure_storage().unwrap();
+        assert_eq!(decode_saved(&bytes).unwrap().login.unwrap().uin, "10001");
+        assert!(decode_saved(b"broken").is_err());
+        fixture.expired_at = Some(1);
+        assert!(decode_saved(&fixture.serialize_for_secure_storage().unwrap()).is_err());
+        fixture.expired_at = None;
+        fixture.secret_key = Some(vec![1; 16]);
+        assert!(decode_saved(&fixture.serialize_for_secure_storage().unwrap()).is_err());
+    }
     #[test]
     fn stale_events_and_credentials_are_scoped_and_consumed_once() {
         {
@@ -164,5 +230,8 @@ mod tests {
         assert!(state().lock().unwrap().cancel.load(Ordering::Relaxed));
         publish(42, json!({"phase":"cancelled"}), None, true);
         assert!(!state().lock().unwrap().active);
+        let previous = status(42);
+        assert!(restore(b"malformed").contains("restore_error"));
+        assert_eq!(status(42), previous);
     }
 }
