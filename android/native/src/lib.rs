@@ -10,10 +10,10 @@ pub extern "system" fn Java_org_ctdozlite_mobile_MainActivity_nativeRecentConver
     env: JNIEnv,
     _this: JObject,
 ) -> jstring {
-    let result = if let Some((generation, session)) = auth::snapshot() {
+    let result = if let Some((generation, read_generation, session)) = auth::snapshot() {
         match tokio::runtime::Runtime::new() {
             Ok(runtime)=>runtime.block_on(async {
-                let cancelled=async { while auth::is_current(generation){tokio::time::sleep(std::time::Duration::from_millis(100)).await;} };
+                let cancelled=async { while auth::is_current(generation,read_generation){tokio::time::sleep(std::time::Duration::from_millis(100)).await;} };
                 let request=async {
                     let user=session.login.as_ref().ok_or_else(||anyhow::anyhow!("missing identity"))?.uin.clone();
                     let response=ctdozlite_auth::conversation_transport::get_last_msgs(&session,&[]).await?;
@@ -22,7 +22,7 @@ pub extern "system" fn Java_org_ctdozlite_mobile_MainActivity_nativeRecentConver
                 tokio::select! {
                     _=cancelled=>serde_json::json!({"phase":"cancelled"}),
                     response=tokio::time::timeout(std::time::Duration::from_secs(30),request)=>match response {
-                        Ok(Ok((snapshot,user))) if auth::is_current(generation)=>serde_json::json!({"phase":"loaded","data":snapshot,"account":user}),
+                        Ok(Ok((snapshot,user))) if auth::is_current(generation,read_generation)=>serde_json::json!({"phase":"loaded","data":snapshot,"account":user}),
                         _=>serde_json::json!({"phase":"error","message":"Không tải được tin gần đây. Hãy kiểm tra mạng hoặc phiên đăng nhập."}),
                     }
                 }
@@ -42,6 +42,7 @@ pub extern "system" fn Java_org_ctdozlite_mobile_MainActivity_nativeAuthRestore(
     env: JNIEnv,
     _this: JObject,
     input: JByteArray,
+    expected_generation: jlong,
 ) -> jstring {
     let result = if env
         .get_array_length(&input)
@@ -49,7 +50,7 @@ pub extern "system" fn Java_org_ctdozlite_mobile_MainActivity_nativeAuthRestore(
     {
         "{\"phase\":\"restore_error\"}".to_owned()
     } else if let Ok(mut bytes) = env.convert_byte_array(input) {
-        let result = auth::restore(&bytes);
+        let result = auth::restore(&bytes, expected_generation as u64);
         bytes.fill(0);
         result
     } else {
@@ -58,6 +59,43 @@ pub extern "system" fn Java_org_ctdozlite_mobile_MainActivity_nativeAuthRestore(
     env.new_string(result)
         .map(|s| s.into_raw())
         .unwrap_or(std::ptr::null_mut())
+}
+
+#[no_mangle]
+pub extern "system" fn Java_org_ctdozlite_mobile_MainActivity_nativeAuthRestoreRevision(
+    _env: JNIEnv,
+    _this: JObject,
+) -> jlong {
+    auth::restore_revision()
+        .map(|revision| revision as jlong)
+        .unwrap_or(-1)
+}
+
+#[no_mangle]
+pub extern "system" fn Java_org_ctdozlite_mobile_MainActivity_nativeAuthLocalState(
+    env: JNIEnv,
+    _this: JObject,
+) -> jstring {
+    env.new_string(auth::local_state())
+        .map(|s| s.into_raw())
+        .unwrap_or(std::ptr::null_mut())
+}
+
+#[no_mangle]
+pub extern "system" fn Java_org_ctdozlite_mobile_MainActivity_nativeAuthIsSession(
+    _env: JNIEnv,
+    _this: JObject,
+    generation: jlong,
+) -> jni::sys::jboolean {
+    u8::from(auth::is_session(generation as u64))
+}
+
+#[no_mangle]
+pub extern "system" fn Java_org_ctdozlite_mobile_MainActivity_nativeRecentCancel(
+    _env: JNIEnv,
+    _this: JObject,
+) {
+    auth::cancel_reads();
 }
 
 #[no_mangle]

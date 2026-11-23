@@ -8,6 +8,7 @@ use std::sync::{
 
 struct State {
     generation: u64,
+    read_generation: u64,
     active: bool,
     cancel: Arc<AtomicBool>,
     status: Value,
@@ -19,6 +20,7 @@ fn state() -> &'static Mutex<State> {
     STATE.get_or_init(|| {
         Mutex::new(State {
             generation: 0,
+            read_generation: 0,
             active: false,
             cancel: Arc::new(AtomicBool::new(false)),
             status: json!({"phase":"idle"}),
@@ -29,7 +31,7 @@ fn state() -> &'static Mutex<State> {
 }
 fn publish(generation: u64, value: Value, saved: Option<Vec<u8>>, terminal: bool) {
     if let Ok(mut s) = state().lock() {
-        if s.generation != generation {
+        if s.generation != generation || s.cancel.load(Ordering::Relaxed) {
             return;
         }
         s.status = value;
@@ -114,6 +116,8 @@ pub fn cancel(generation: u64) {
     if let Ok(mut s) = state().lock() {
         if s.generation == generation {
             s.cancel.store(true, Ordering::Relaxed);
+            s.active = false;
+            s.status = json!({"phase":"cancelled"});
             s.saved = None;
             s.session = None;
         }
@@ -143,6 +147,13 @@ fn decode_saved(bytes: &[u8]) -> anyhow::Result<Session> {
     anyhow::ensure!(session.expired_at.is_none(), "expired session");
     anyhow::ensure!(
         session
+            .zpw_sek
+            .as_ref()
+            .is_some_and(|token| !token.is_empty()),
+        "missing credentials"
+    );
+    anyhow::ensure!(
+        session
             .secret_key
             .as_ref()
             .map_or(false, |key| key.len() == 32),
@@ -151,7 +162,34 @@ fn decode_saved(bytes: &[u8]) -> anyhow::Result<Session> {
     Ok(session)
 }
 
-pub fn restore(bytes: &[u8]) -> String {
+pub fn restore_revision() -> Option<u64> {
+    state()
+        .lock()
+        .ok()
+        .and_then(|s| (!s.active && s.session.is_none()).then_some(s.generation))
+}
+
+pub fn is_session(generation: u64) -> bool {
+    state().lock().ok().is_some_and(|s| {
+        s.generation == generation
+            && !s.active
+            && s.session.is_some()
+            && !s.cancel.load(Ordering::Relaxed)
+    })
+}
+
+pub fn local_state() -> String {
+    state().lock().ok().map(|s| {
+        if !s.active && !s.cancel.load(Ordering::Relaxed) {
+            if let Some(login)=s.session.as_ref().and_then(|session|session.login.as_ref()) {
+                return json!({"phase":"available","name":login.display_name.chars().take(160).collect::<String>()}).to_string();
+            }
+        }
+        json!({"phase":"unavailable"}).to_string()
+    }).unwrap_or_else(||json!({"phase":"unavailable"}).to_string())
+}
+
+pub fn restore(bytes: &[u8], expected_generation: u64) -> String {
     let Ok(session) = decode_saved(bytes) else {
         return json!({"phase":"restore_error"}).to_string();
     };
@@ -166,6 +204,12 @@ pub fn restore(bytes: &[u8]) -> String {
     if s.active {
         return json!({"phase":"busy"}).to_string();
     }
+    if s.session.is_some() {
+        return json!({"phase":"already_present"}).to_string();
+    }
+    if s.generation != expected_generation {
+        return json!({"phase":"stale"}).to_string();
+    }
     s.generation += 1;
     s.saved = None;
     s.cancel = Arc::new(AtomicBool::new(false));
@@ -174,21 +218,31 @@ pub fn restore(bytes: &[u8]) -> String {
     s.status.to_string()
 }
 
-pub fn snapshot() -> Option<(u64, Session)> {
+pub fn snapshot() -> Option<(u64, u64, Session)> {
     state().lock().ok().and_then(|s| {
         if s.active || s.cancel.load(Ordering::Relaxed) {
             None
         } else {
             s.session
                 .as_ref()
-                .map(|session| (s.generation, session.clone()))
+                .map(|session| (s.generation, s.read_generation, session.clone()))
         }
     })
 }
-pub fn is_current(generation: u64) -> bool {
+pub fn is_current(generation: u64, read_generation: u64) -> bool {
     state().lock().ok().is_some_and(|s| {
-        s.generation == generation && s.session.is_some() && !s.cancel.load(Ordering::Relaxed)
+        s.generation == generation
+            && s.read_generation == read_generation
+            && s.session.is_some()
+            && !s.cancel.load(Ordering::Relaxed)
     })
+}
+
+/// Invalidate reads when an Activity stops without destroying its authenticated Session.
+pub fn cancel_reads() {
+    if let Ok(mut s) = state().lock() {
+        s.read_generation = s.read_generation.wrapping_add(1);
+    }
 }
 
 #[cfg(test)]
@@ -212,6 +266,16 @@ mod tests {
         assert!(decode_saved(&fixture.serialize_for_secure_storage().unwrap()).is_err());
         fixture.expired_at = None;
         fixture.secret_key = Some(vec![1; 16]);
+        assert!(decode_saved(&fixture.serialize_for_secure_storage().unwrap()).is_err());
+    }
+    #[test]
+    fn restored_session_without_credentials_is_rejected() {
+        let mut fixture = Session::new(false, false, false).unwrap();
+        fixture.secret_key = Some(vec![7; 32]);
+        fixture.login = Some(ctdozlite_auth::session::LoginInfo {
+            uin: "10001".into(),
+            ..Default::default()
+        });
         assert!(decode_saved(&fixture.serialize_for_secure_storage().unwrap()).is_err());
     }
     #[test]
@@ -246,10 +310,18 @@ mod tests {
         assert!(!state().lock().unwrap().cancel.load(Ordering::Relaxed));
         cancel(42);
         assert!(state().lock().unwrap().cancel.load(Ordering::Relaxed));
-        publish(42, json!({"phase":"cancelled"}), None, true);
         assert!(!state().lock().unwrap().active);
+        assert!(status(42).contains("cancelled"));
+        publish(
+            42,
+            json!({"phase":"waiting_scan"}),
+            Some(b"late-data".to_vec()),
+            false,
+        );
+        assert!(status(42).contains("cancelled"));
+        assert!(take(42).is_none());
         let previous = status(42);
-        assert!(restore(b"malformed").contains("restore_error"));
+        assert!(restore(b"malformed", 42).contains("restore_error"));
         assert_eq!(status(42), previous);
         let mut fixture = Session::new(false, false, false).unwrap();
         fixture.secret_key = Some(vec![7; 32]);
@@ -258,13 +330,40 @@ mod tests {
             uin: "10001".into(),
             ..Default::default()
         });
-        assert!(restore(&fixture.serialize_for_secure_storage().unwrap())
-            .contains("restored_unverified"));
-        let (generation, _) = snapshot().unwrap();
-        assert!(is_current(generation));
-        assert!(!is_current(42));
+        let revision = restore_revision().unwrap();
+        assert!(restore(
+            &fixture.serialize_for_secure_storage().unwrap(),
+            revision.wrapping_sub(1)
+        )
+        .contains("stale"));
+        assert!(restore_revision().is_some());
+        assert!(
+            restore(&fixture.serialize_for_secure_storage().unwrap(), revision)
+                .contains("restored_unverified")
+        );
+        let (generation, read_generation, _) = snapshot().unwrap();
+        assert!(restore_revision().is_none());
+        assert!(is_session(generation));
+        assert!(is_current(generation, read_generation));
+        assert!(!is_current(42, read_generation));
+        // A late disk restore must never replace an already installed Session.
+        let mut other = fixture.clone();
+        other.login.as_mut().unwrap().uin = "20002".into();
+        assert!(
+            restore(&other.serialize_for_secure_storage().unwrap(), generation)
+                .contains("already_present")
+        );
+        assert_eq!(snapshot().unwrap().2.login.unwrap().uin, "10001");
+        cancel_reads();
+        assert!(is_session(generation));
+        assert!(!is_current(generation, read_generation));
+        let (current_generation, current_read, current_session) = snapshot().unwrap();
+        assert_eq!(current_session.login.unwrap().uin, "10001");
+        assert_eq!(current_generation, generation);
+        assert!(is_current(generation, current_read));
         cancel(generation);
-        assert!(!is_current(generation));
+        assert!(!is_session(generation));
+        assert!(!is_current(generation, current_read));
         assert!(snapshot().is_none());
     }
 }

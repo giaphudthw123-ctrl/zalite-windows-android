@@ -47,5 +47,6 @@ What we will do, in one paragraph, present tense.
 | [0010](0010-android-qr-session-owner.md) | Android QR Session owner and Keystore output | Prototype testing only |
 | [0011](0011-android-local-session-restore.md) | Android local Session restoration | Prototype testing |
 | [0012](0012-shared-recent-conversation-projection.md) | Shared preview transport and bounded mobile projection | Prototype testing |
+| [0013](0013-android-session-lifecycle.md) | Preserve completed Sessions across Activity lifecycle | Prototype testing |
 
 Related domain language lives in [`/GLOSSARY.md`](../../GLOSSARY.md).

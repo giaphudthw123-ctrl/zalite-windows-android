@@ -18,7 +18,7 @@ final class MobileShell {
     private final java.util.Map<String,String> drafts=new java.util.HashMap<>();
     private String conversationAccount="";
     private String searchQuery="";
-    void clearRecent(){conversations=new org.json.JSONArray();drafts.clear();demo=false;limited=false;}
+    void clearRecent(){conversations=new org.json.JSONArray();drafts.clear();demo=false;limited=false;conversationAccount="";searchQuery="";selected=0;if(root!=null)show();}
     void setRecentLoading(boolean loading) { recentLoading=loading;if(selected==0&&!inConversation&&body!=null)select(0); }
     void acceptRecent(org.json.JSONObject data,boolean isDemo) {
         String account=data.optString("account");

@@ -34,7 +34,7 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Locale;
 
-/** Local Android prototype. No network or Zalo account access. */
+/** Android prototype with explicit companion authentication and local tools. */
 public final class MainActivity extends Activity {
     private static final int PICK_GIF = 14;
     private static final int MAX_GIF_BYTES = 8 * 1024 * 1024;
@@ -48,11 +48,17 @@ public final class MainActivity extends Activity {
     private native void nativeAuthCancel(long generation);
     private native String nativeAuthStatus(long generation);
     private native byte[] nativeAuthTake(long generation);
-    private native String nativeAuthRestore(byte[] bytes);
+    private native String nativeAuthRestore(byte[] bytes, long expectedGeneration);
+    private native long nativeAuthRestoreRevision();
+    private native String nativeAuthLocalState();
+    private native boolean nativeAuthIsSession(long generation);
     private native String nativeRecentConversations();
+    private native void nativeRecentCancel();
     private boolean recentLoading;
-    private int recentUiGeneration;
+    private boolean sessionSaving;
+    private final UiLifecycle uiLifecycle = new UiLifecycle();
     private long authGeneration;
+    private Runnable resetQrUi;
     private final android.os.Handler authHandler = new android.os.Handler(android.os.Looper.getMainLooper());
 
     private final ArrayList<String> templates = new ArrayList<>();
@@ -171,40 +177,61 @@ public final class MainActivity extends Activity {
 
     @Override protected void onStart() {
         super.onStart();
+        uiLifecycle.resume();
         if(mobileShell!=null && authGeneration==0)restoreStoredSession();
     }
     @Override protected void onStop() {
-        super.onStop(); cancelAuth();
+        uiLifecycle.stop();
+        nativeRecentCancel();
+        recentLoading=false;
+        mobileShell.setRecentLoading(false);
+        cancelAuth();
+        super.onStop();
     }
     private void cancelAuth() {
-        if(authGeneration!=0) nativeAuthCancel(authGeneration);
+        if(authGeneration!=0) {
+            nativeAuthCancel(authGeneration);
+            if(resetQrUi!=null)resetQrUi.run();
+        }
         authGeneration=0;authHandler.removeCallbacksAndMessages(null);
     }
     private void restoreStoredSession() {
+        final long uiTicket=uiLifecycle.ticket();
+        final long revision=nativeAuthRestoreRevision();
+        if(revision<0) {
+            try {
+                org.json.JSONObject local=new org.json.JSONObject(nativeAuthLocalState());
+                if(local.optString("phase").equals("available")) mobileShell.setLocalSessionLabel("Phiên trong bộ nhớ: "+local.optString("name")+" • chưa đồng bộ tin");
+            }catch(Exception error){mobileShell.setLocalSessionLabel("Không đọc được trạng thái phiên trong bộ nhớ.");}
+            return;
+        }
         new Thread(() -> {
             byte[] bytes=null;
             String label=null;
+            boolean restored=false;
             try {
                 SessionVault vault=new SessionVault(this);
                 if(!vault.exists())return;
                 bytes=vault.read();
-                org.json.JSONObject result=new org.json.JSONObject(nativeAuthRestore(bytes));
-                if(result.optString("phase").equals("restored_unverified")) label="Phiên trên máy: "+result.optString("name")+" • chưa xác minh máy chủ";
-                else if(!result.optString("phase").equals("busy")) label="Không khôi phục được phiên trên máy. Tệp cũ vẫn được giữ.";
+                org.json.JSONObject result=new org.json.JSONObject(nativeAuthRestore(bytes,revision));
+                String phase=result.optString("phase");
+                if(phase.equals("restored_unverified")) { restored=true;label="Phiên trên máy: "+result.optString("name")+" • chưa xác minh máy chủ"; }
+                else if(phase.equals("restore_error")) label="Không khôi phục được phiên trên máy. Tệp cũ vẫn được giữ.";
             } catch(Exception error) { label="Không mở được kho phiên bảo vệ. Tệp cũ vẫn được giữ."; }
             finally { if(bytes!=null)Arrays.fill(bytes,(byte)0); }
             final String message=label;
-            if(message!=null)runOnUiThread(()->{if(authGeneration==0&&!isFinishing()&&!isDestroyed())mobileShell.setLocalSessionLabel(message);});
+            final boolean installed=restored;
+            if(message!=null)runOnUiThread(()->{if(uiLifecycle.accepts(uiTicket)&&authGeneration==0&&!isFinishing()&&!isDestroyed()){if(installed)mobileShell.clearRecent();mobileShell.setLocalSessionLabel(message);}});
         },"session-vault-restore").start();
     }
     private void loadRecent() {
         if(recentLoading)return;
-        final int requestGeneration=++recentUiGeneration;
+        final long uiTicket=uiLifecycle.ticket();
         recentLoading=true;mobileShell.setRecentLoading(true);
         new Thread(()->{
             String response=nativeRecentConversations();
             runOnUiThread(()->{
-                if(requestGeneration!=recentUiGeneration)return;
+                if(!uiLifecycle.accepts(uiTicket))return;
                 recentLoading=false;mobileShell.setRecentLoading(false);
                 if(isFinishing()||isDestroyed())return;
                 try{
@@ -216,8 +243,9 @@ public final class MainActivity extends Activity {
         },"recent-conversations").start();
     }
     private void showLogin() {
+        if(sessionSaving){Toast.makeText(this,"Đang bảo vệ phiên. Vui lòng chờ lưu xong.",Toast.LENGTH_SHORT).show();return;}
         cancelAuth();
-        recentUiGeneration++;recentLoading=false;mobileShell.setRecentLoading(false);
+        uiLifecycle.invalidate();nativeRecentCancel();recentLoading=false;mobileShell.setRecentLoading(false);
         mobileShell.clearRecent();
         LinearLayout page=new LinearLayout(this);page.setOrientation(LinearLayout.VERTICAL);page.setPadding(24,48,24,48);page.setBackgroundColor(0xffffffff);
         TextView heading=new TextView(this);heading.setText("Đăng nhập bằng QR");heading.setTextSize(24);page.addView(heading);
@@ -225,10 +253,12 @@ public final class MainActivity extends Activity {
         ImageView qr=new ImageView(this);qr.setAdjustViewBounds(true);page.addView(qr,new LinearLayout.LayoutParams(-1,320));
         TextView progress=new TextView(this);progress.setText("Chưa tạo mã. Không quét bằng tài khoản thật khi chưa kiểm chứng xong.");page.addView(progress);
         Button start=new Button(this);start.setText("Tạo mã QR");page.addView(start);
+        resetQrUi=()->{qr.setImageDrawable(null);start.setEnabled(true);progress.setText("Đã hủy mã QR khi rời màn hình. Bấm Tạo mã QR để thử lại.");};
         Button cancel=new Button(this);cancel.setText("Hủy và về Tin nhắn");cancel.setOnClickListener(v->{cancelAuth();qr.setImageDrawable(null);mobileShell.show();});page.addView(cancel);
         Button check=new Button(this);check.setText("Kiểm tra kho bảo vệ bằng dữ liệu giả");page.addView(check);
         check.setOnClickListener(v->{ check.setEnabled(false);new Thread(()->{boolean ok;try{SessionVault.selfTest(this);ok=true;}catch(Exception error){ok=false;}final boolean passed=ok;runOnUiThread(()->{check.setEnabled(true);progress.setText(passed?"Kiểm tra Keystore: khôi phục, dữ liệu ngẫu nhiên và chống sửa đổi đều qua.":"Thiết bị chưa vượt qua kiểm tra kho bảo vệ.");});},"vault-selftest").start(); });
         start.setOnClickListener(v->{cancelAuth();start.setEnabled(false);authGeneration=nativeAuthStart();final long generation=authGeneration;
+            if(generation==0){start.setEnabled(true);progress.setText("Không bắt đầu được đăng nhập. Hãy thử lại.");return;}
             authHandler.post(new Runnable(){private boolean rendered; public void run(){
                 if(authGeneration!=generation||generation==0)return;
                 try {
@@ -246,7 +276,11 @@ public final class MainActivity extends Activity {
                     else if(phase.equals("requesting"))progress.setText("Đang yêu cầu mã QR…");
                     else if(phase.equals("authenticated")) {
                         byte[] session=nativeAuthTake(generation);qr.setImageDrawable(null);progress.setText("Đang bảo vệ phiên trên thiết bị…");
-                        new Thread(()->{boolean ok=false;try{new SessionVault(MainActivity.this).save(session);ok=true;}catch(Exception error){}finally{if(session!=null)Arrays.fill(session,(byte)0);}final boolean saved=ok;runOnUiThread(()->{start.setEnabled(true);progress.setText(saved?"Đã lưu phiên bảo vệ. Về Tin nhắn để tải tin gần đây.":"Không lưu được phiên bảo vệ. Hãy hủy và thử lại.");});},"session-vault-save").start();return;
+                        // Authentication is complete: leaving this screen must not cancel the Session.
+                        authGeneration=0;resetQrUi=null;sessionSaving=true;
+                        cancel.setText("Về Tin nhắn");cancel.setOnClickListener(v->mobileShell.show());
+                        mobileShell.setLocalSessionLabel("Phiên tạm trong bộ nhớ • đang lưu bảo vệ");
+                        new Thread(()->{boolean ok=false;try{ok=new SessionVault(MainActivity.this).saveIfCurrent(session,()->nativeAuthIsSession(generation));}catch(Exception error){}finally{if(session!=null)Arrays.fill(session,(byte)0);}final boolean saved=ok;runOnUiThread(()->{sessionSaving=false;if(isFinishing()||isDestroyed()||!nativeAuthIsSession(generation))return;start.setEnabled(true);mobileShell.setLocalSessionLabel(saved?"Đã lưu phiên bảo vệ • chưa đồng bộ tin":"Phiên chỉ ở bộ nhớ • chưa lưu được khi đóng ứng dụng");progress.setText(saved?"Đã lưu phiên bảo vệ. Về Tin nhắn để tải tin gần đây.":"Không lưu được phiên bảo vệ. Có thể tiếp tục trong phiên tạm; đóng ứng dụng có thể cần đăng nhập lại.");});},"session-vault-save").start();return;
                     } else {qr.setImageDrawable(null);progress.setText(state.optString("message","Đã kết thúc hoặc hủy đăng nhập."));start.setEnabled(true);return;}
                     authHandler.postDelayed(this,500);
                 } catch(Exception error){cancelAuth();qr.setImageDrawable(null);progress.setText("Không đọc được trạng thái đăng nhập.");start.setEnabled(true);}

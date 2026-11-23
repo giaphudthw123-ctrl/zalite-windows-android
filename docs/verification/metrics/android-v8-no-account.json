@@ -1,0 +1,34 @@
+{
+  "date": "2026-11-23",
+  "environment": {
+    "device": "emulator-5554",
+    "model": "Android SDK built for x86_64",
+    "android_release": "16",
+    "api": 36,
+    "abi": "x86_64",
+    "screen_pixels": [320, 640]
+  },
+  "package": "org.ctdozlite.mobile.internal",
+  "version_code": 8,
+  "apk_bytes": 14607541,
+  "apk_sha256": "7B2CE357C46FE8B56DA404DDDE9F4EB9DF9E536C3F5674F9D6353EF99E3CA3EF",
+  "workload": "No account; QR cancelled; disconnected Messages screen; existing synthetic-test profile",
+  "foreground": {
+    "pss_kib": 45111,
+    "rss_kib": 172100,
+    "cpu_sample": {"process": 3851, "duration_seconds": 20.155, "clock_ticks_per_second": 100, "delta_cpu_ticks": 0}
+  },
+  "background": {
+    "pss_kib": 38828,
+    "rss_kib": 166936,
+    "cpu_sample": {"process": 3851, "duration_seconds": 20.172, "clock_ticks_per_second": 100, "before_cpu_ticks": 668, "after_cpu_ticks": 668}
+  },
+  "allocated_directory_kib": {"files": 24, "cache": 8, "no_backup_empty_directory": 8},
+  "network_bytes": null,
+  "limits": [
+    "Short emulator samples, no official-Zalo baseline or before/after comparison",
+    "No CPU tick observed at 10 ms resolution is not a claim of permanently zero CPU",
+    "PSS/RSS snapshots and CPU windows were collected separately",
+    "No authenticated messages, media workload, physical-device or network-byte measurement"
+  ]
+}

@@ -11,6 +11,8 @@ import javax.crypto.spec.GCMParameterSpec;
 
 /** User Session bytes are written only as authenticated ciphertext; never as a backup JSON. */
 final class SessionVault {
+    // AtomicFile is not a cross-instance lock; all Activity instances share this worker-side gate.
+    private static final Object IO_LOCK=new Object();
     private static final int LIMIT=8*1024*1024;
     private final AtomicFile file;
     private final String alias;
@@ -24,7 +26,11 @@ final class SessionVault {
         return generator.generateKey();
     }
     boolean exists() { return file.getBaseFile().exists() || new File(file.getBaseFile().getPath()+".bak").exists(); }
-    synchronized void save(byte[] bytes) throws Exception {
+    void save(byte[] bytes) throws Exception { synchronized(IO_LOCK) { saveLocked(bytes); } }
+    boolean saveIfCurrent(byte[] bytes,java.util.function.BooleanSupplier current) throws Exception {
+        synchronized(IO_LOCK) { if(!current.getAsBoolean())return false;saveLocked(bytes);return true; }
+    }
+    private void saveLocked(byte[] bytes) throws Exception {
         if(bytes==null||bytes.length==0||bytes.length>LIMIT-4096) throw new IOException("Invalid Session size");
         Cipher cipher=Cipher.getInstance("AES/GCM/NoPadding");cipher.init(Cipher.ENCRYPT_MODE,key());
         byte[] sealed=cipher.doFinal(bytes), iv=cipher.getIV();
@@ -33,7 +39,8 @@ final class SessionVault {
         try { output=file.startWrite();output.write(new byte[]{'Z','S','V',1});output.write(iv);output.write(sealed);file.finishWrite(output); }
         catch(Exception error) { if(output!=null) file.failWrite(output);throw error; }
     }
-    synchronized byte[] read() throws Exception {
+    byte[] read() throws Exception { synchronized(IO_LOCK) { return readLocked(); } }
+    private byte[] readLocked() throws Exception {
         byte[] bytes;
         try(InputStream input=file.openRead();ByteArrayOutputStream output=new ByteArrayOutputStream()) {
             byte[] buffer=new byte[8192];int count;
@@ -48,6 +55,8 @@ final class SessionVault {
         byte[] fixture="synthetic-session-only".getBytes(java.nio.charset.StandardCharsets.UTF_8);
         try {
             vault.save(fixture);if(!Arrays.equals(vault.read(),fixture))throw new IOException("Roundtrip failed");
+            SessionVault secondAdapter=new SessionVault(context,"zalite.session.selftest","session-vault-selftest.bin");
+            if(secondAdapter.saveIfCurrent(new byte[]{1},()->false)||!Arrays.equals(secondAdapter.read(),fixture))throw new IOException("Stale save changed vault");
             byte[] first=java.nio.file.Files.readAllBytes(vault.file.getBaseFile().toPath());
             vault.save(fixture);byte[] second=java.nio.file.Files.readAllBytes(vault.file.getBaseFile().toPath());
             if(Arrays.equals(first,second))throw new IOException("Repeated IV/ciphertext");

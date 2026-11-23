@@ -26,7 +26,7 @@ foreach ($target in $targets) {
     $ccTarget = $target.Rust.Replace('-', '_')
     [Environment]::SetEnvironmentVariable("CC_$ccTarget", $linker, 'Process')
     [Environment]::SetEnvironmentVariable("AR_$ccTarget", (Join-Path $llvm 'llvm-ar.exe'), 'Process')
-    & cargo build --manifest-path (Join-Path $projectDir 'native/Cargo.toml') --locked --release --target $target.Rust
+    & cargo build --manifest-path (Join-Path $projectDir 'native/Cargo.toml') --target-dir (Join-Path $projectDir 'native/target') --locked --release --target $target.Rust
     if ($LASTEXITCODE -ne 0) { throw "Rust build failed for $($target.Rust)" }
     $source = Join-Path $projectDir "native/target/$($target.Rust)/release/libctdozlite_android.so"
     $destination = Join-Path $projectDir "app/src/main/jniLibs/$($target.Abi)"
@@ -36,7 +36,8 @@ foreach ($target in $targets) {
 
 Push-Location $projectDir
 try {
-    & gradle.bat --no-daemon "-PinternalUpdateRepo=$InternalUpdateRepo" :app:testForkDebugUnitTest :app:testInternalDebugUnitTest :app:assembleForkDebug :app:assembleInternalDebug
+    # Fresh packaging avoids stale ZIP payloads observed after incremental JNI replacement.
+    & gradle.bat --no-daemon "-PinternalUpdateRepo=$InternalUpdateRepo" :app:clean :app:testForkDebugUnitTest :app:testInternalDebugUnitTest :app:assembleForkDebug :app:assembleInternalDebug
     if ($LASTEXITCODE -ne 0) { throw 'Android Gradle build failed.' }
 } finally {
     Pop-Location
