@@ -87,27 +87,39 @@ public final class MainActivity extends Activity implements MobileShell.SendActi
     private boolean favoritesOnly;
     private int galleryPage, galleryGeneration, previewGeneration;
     private ScrollView toolsScreen;
+    private LinearLayout toolsRoot;
     private MobileShell mobileShell;
+    private View gifSection,templateSection,updateSection;
+    private static final java.util.concurrent.ExecutorService PRIVACY_IO=java.util.concurrent.Executors.newSingleThreadExecutor();
+    private boolean captureEnabled=true,captureLoaded,captureBusy;
+    private String captureProblem="";
+    private android.widget.Switch captureSwitch;
+    private TextView captureStatus;
+    private boolean captureRendering;
 
     @Override public void onCreate(Bundle state) {
         super.onCreate(state);
+        CaptureProtection.set(this,true);
         getWindow().getDecorView().setSystemUiVisibility(android.view.View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR | android.view.View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR);
         ScrollView scroll = new ScrollView(this);
         toolsScreen = scroll;
+        toolsRoot=new LinearLayout(this);toolsRoot.setOrientation(LinearLayout.VERTICAL);toolsRoot.setBackgroundColor(android.graphics.Color.WHITE);
+        toolsRoot.setOnApplyWindowInsetsListener((view,insets)->{view.setPadding(insets.getSystemWindowInsetLeft(),insets.getSystemWindowInsetTop(),insets.getSystemWindowInsetRight(),insets.getSystemWindowInsetBottom());return insets;});
+        toolsRoot.addView(scroll,new LinearLayout.LayoutParams(-1,0,1));
         LinearLayout content = new LinearLayout(this);
         content.setOrientation(LinearLayout.VERTICAL);
         content.setPadding(24, 24, 24, 24);
         scroll.addView(content);
-        setContentView(scroll);
+        showTools();
 
         TextView title = new TextView(this);
         title.setText(getString(R.string.app_name) + " • bản thử Android");
         title.setTextSize(22);
         content.addView(title);
-        Button backToMessages = new Button(this);
-        backToMessages.setText("‹ Về Tin nhắn");
+        TextView backToMessages = new TextView(this);
+        backToMessages.setText("‹  Tiện ích của bạn");backToMessages.setTextSize(20);backToMessages.setTextColor(0xff172334);backToMessages.setPadding(pixels(16),pixels(16),pixels(16),pixels(16));backToMessages.setContentDescription("Quay lại màn hình Zalite");
         backToMessages.setOnClickListener(v -> mobileShell.show());
-        content.addView(backToMessages);
+        toolsRoot.addView(backToMessages,0);
         TextView notice = new TextView(this);
         notice.setText("GIF và mẫu là thư viện trên thiết bị. Trong hội thoại, bấm Mẫu tin để xem trước và chèn; thao tác chèn không tự gửi.");
         content.addView(notice);
@@ -118,6 +130,10 @@ public final class MainActivity extends Activity implements MobileShell.SendActi
         updates.setEnabled(!BuildConfig.UPDATE_REPO.isEmpty());
         updates.setOnClickListener(v -> checkUpdate(updates));
         content.addView(updates);
+        updateSection=updates;
+        if(!BuildConfig.UPDATE_REPO.isEmpty()) {
+            TextView channel=new TextView(this);channel.setText("Kênh cập nhật: "+BuildConfig.UPDATE_REPO);content.addView(channel);
+        }
         if (BuildConfig.UPDATE_REPO.isEmpty()) {
             TextView channel = new TextView(this);
             channel.setText("Kênh nội bộ chờ gắn repo GitHub của bạn; không lưu token trong APK.");
@@ -133,6 +149,7 @@ public final class MainActivity extends Activity implements MobileShell.SendActi
             startActivityForResult(pick, PICK_GIF);
         });
         content.addView(importGif);
+        gifSection=importGif;
         gifSearch = new EditText(this);
         gifSearch.setSingleLine(true);
         gifSearch.setHint("Tìm GIF theo tên hoặc thẻ");
@@ -162,6 +179,7 @@ public final class MainActivity extends Activity implements MobileShell.SendActi
         templateHeading.setText("Mẫu tin nhắn nhanh (cục bộ)");
         templateHeading.setTextSize(18);
         content.addView(templateHeading);
+        templateSection=templateHeading;
         draft = new EditText(this);
         draft.setHint("Bản nháp để chèn mẫu; chưa có chức năng gửi");
         draft.setMinLines(2);
@@ -184,10 +202,51 @@ public final class MainActivity extends Activity implements MobileShell.SendActi
         content.addView(templateList);
         renderGallery();
         renderTemplates();
-        mobileShell = new MobileShell(this, () -> setContentView(toolsScreen), this::showLogin, this::loadRecent,this);
+        mobileShell = new MobileShell(this, this::showTools, this::showLogin, this::loadRecent,this,this::openUtility);
         mobileShell.show();
         handleSharedGif(getIntent());
         reloadTemplates();
+        loadCaptureSetting();
+    }
+
+    private int pixels(int value){return Math.round(value*getResources().getDisplayMetrics().density);}
+    private void showTools(){setContentView(toolsRoot);toolsRoot.requestApplyInsets();}
+    private void openUtility(String section) {
+        if(section.equals("privacy")){showPrivacy();return;}
+        showTools();
+        View target=section.equals("gif")?gifSection:section.equals("templates")?templateSection:updateSection;
+        toolsScreen.post(()->toolsScreen.smoothScrollTo(0,target.getTop()));
+    }
+    private void showPrivacy() {
+        LinearLayout page=new LinearLayout(this);page.setOrientation(LinearLayout.VERTICAL);page.setBackgroundColor(0xfff3f5f8);
+        page.setOnApplyWindowInsetsListener((view,insets)->{view.setPadding(insets.getSystemWindowInsetLeft(),insets.getSystemWindowInsetTop(),insets.getSystemWindowInsetRight(),insets.getSystemWindowInsetBottom());return insets;});
+        TextView back=new TextView(this);back.setText("‹  Bảo mật và riêng tư");back.setTextSize(20);back.setTextColor(0xff172334);back.setPadding(pixels(16),pixels(18),pixels(16),pixels(18));back.setBackgroundColor(android.graphics.Color.WHITE);back.setOnClickListener(v->mobileShell.show());page.addView(back);
+        ScrollView scroll=new ScrollView(this);LinearLayout content=new LinearLayout(this);content.setOrientation(LinearLayout.VERTICAL);content.setPadding(pixels(16),pixels(20),pixels(16),pixels(24));scroll.addView(content);page.addView(scroll,new LinearLayout.LayoutParams(-1,0,1));
+        captureSwitch=new android.widget.Switch(this);captureSwitch.setText("Hạn chế chụp màn hình");captureSwitch.setTextSize(16);captureSwitch.setPadding(0,pixels(12),0,pixels(12));content.addView(captureSwitch);
+        TextView explanation=new TextView(this);explanation.setText("Áp dụng cho cửa sổ và hộp thoại của Zalite trên Android. Hệ thống sẽ hạn chế ảnh chụp và chia sẻ màn hình. Không ngăn máy ảnh, thiết bị đã can thiệp, bàn phím hoặc ứng dụng chọn tệp bên ngoài. Đây không phải hạn chế lưu/chuyển tiếp ở phía người nhận.");explanation.setTextSize(14);explanation.setTextColor(0xff526479);explanation.setLineSpacing(pixels(4),1);content.addView(explanation);
+        captureStatus=new TextView(this);captureStatus.setPadding(0,pixels(18),0,pixels(12));content.addView(captureStatus);
+        Button retry=new Button(this);retry.setText("Đọc lại cài đặt");retry.setAllCaps(false);retry.setOnClickListener(v->loadCaptureSetting());content.addView(retry);
+        TextView storage=new TextView(this);storage.setPadding(0,pixels(24),0,0);storage.setText("Phiên và kho mẫu được mã hóa riêng bằng Keystore. GIF và bản nháp cũ chưa được mã hóa toàn bộ. Chưa có khóa PIN hoặc sao lưu mã hóa chuyển máy trên Android.");storage.setTextColor(0xff526479);content.addView(storage);
+        captureSwitch.setOnCheckedChangeListener((button,enabled)->{if(!captureRendering)saveCaptureSetting(enabled);});
+        setContentView(page);page.requestApplyInsets();renderCaptureSetting();
+    }
+    private void renderCaptureSetting() {
+        if(captureSwitch==null)return;
+        captureRendering=true;captureSwitch.setChecked(captureEnabled);captureSwitch.setEnabled(captureLoaded&&!captureBusy);captureRendering=false;
+        captureStatus.setText(captureBusy?"Đang đọc/lưu cài đặt…":!captureProblem.isEmpty()?captureProblem:captureEnabled?"Đang bật cho cửa sổ Zalite.":"Đang tắt. Nội dung có thể xuất hiện trong ảnh chụp màn hình.");
+    }
+    private void loadCaptureSetting() {
+        if(captureBusy)return;captureBusy=true;renderCaptureSetting();
+        PRIVACY_IO.execute(()->{boolean enabled=true;String problem="";try{enabled=new CaptureSettings(this).read();}catch(Exception error){problem="Không đọc được cài đặt. Giữ bảo vệ bật; hãy thử đọc lại trước khi thay đổi.";}final boolean value=enabled;final String message=problem;
+            runOnUiThread(()->{if(isFinishing()||isDestroyed())return;captureBusy=false;captureEnabled=value;captureLoaded=message.isEmpty();captureProblem=message;CaptureProtection.set(this,value);renderCaptureSetting();});});
+    }
+    private void saveCaptureSetting(boolean enabled) {
+        if(!captureLoaded||captureBusy){renderCaptureSetting();return;}
+        captureBusy=true;captureProblem="";
+        // Protection is immediate when enabling; disabling waits for verified persistence.
+        if(enabled){captureEnabled=true;CaptureProtection.set(this,true);}renderCaptureSetting();
+        PRIVACY_IO.execute(()->{boolean ok=false;try{new CaptureSettings(this).save(enabled);ok=true;}catch(Exception error){}final boolean saved=ok;
+            runOnUiThread(()->{if(isFinishing()||isDestroyed())return;captureBusy=false;captureEnabled=saved?enabled:true;captureLoaded=saved;captureProblem=saved?"":"Không lưu/xác minh được cài đặt. Giữ bảo vệ bật; hãy đọc lại trước khi thử tiếp.";CaptureProtection.set(this,captureEnabled);renderCaptureSetting();});});
     }
 
     @Override protected void onStart() {
@@ -281,7 +340,7 @@ public final class MainActivity extends Activity implements MobileShell.SendActi
                 long ticket=prepared.optLong("ticket");
                 if(!uiLifecycle.accepts(uiTicket)||isFinishing()||isDestroyed()){if(ticket!=0)nativeCancelSendPreview(ticket);sendPreparing=false;return;}
                 if(!prepared.optString("phase").equals("prepared")||ticket==0){sendPreparing=false;done.accept(prepared);return;}
-                sendConfirmation=new AlertDialog.Builder(this).setTitle("Xác nhận gửi thử nghiệm")
+                sendConfirmation=new CaptureProtection.Builder(this).setTitle("Xác nhận gửi thử nghiệm")
                     .setMessage("Từ tài khoản: "+account+"\nĐến: "+SendStatus.previewName(name)+"\nMã "+(group?"nhóm: ":"liên hệ: ")+target+"\n\n"+text+"\n\nLuồng Android chưa được kiểm chứng với tài khoản thật. Nếu mất phản hồi, không tự gửi lại; hãy kiểm tra lịch sử trước.")
                     .setNegativeButton("Hủy",(dialog,which)->{nativeCancelSendPreview(ticket);sendPreparing=false;done.accept(sendResult("cancelled",null));})
                     .setOnCancelListener(dialog->{nativeCancelSendPreview(ticket);sendPreparing=false;done.accept(sendResult("cancelled",null));})
@@ -357,7 +416,7 @@ public final class MainActivity extends Activity implements MobileShell.SendActi
 
     private void handleSharedGif(Intent intent) {
         if (intent == null || !Intent.ACTION_SEND.equals(intent.getAction())) return;
-        setContentView(toolsScreen);
+        showTools();
         if (!"image/gif".equalsIgnoreCase(intent.getType())) {
             status.setText("Chỉ hỗ trợ nhận tệp GIF đã lưu.");
             return;
@@ -490,13 +549,13 @@ public final class MainActivity extends Activity implements MobileShell.SendActi
     }
 
     private void manageGif(GifGallery.Entry entry, File file) {
-        new AlertDialog.Builder(this).setTitle(entry.name)
+        new CaptureProtection.Builder(this).setTitle(entry.name)
             .setItems(new String[]{"Sửa tên và thẻ", entry.favorite ? "Bỏ yêu thích" : "Thêm yêu thích", "Xóa GIF"}, (dialog, action) -> {
                 if (action == 0) {
                     LinearLayout form = new LinearLayout(this); form.setOrientation(LinearLayout.VERTICAL);
                     EditText name = new EditText(this); name.setSingleLine(true); name.setText(entry.name); form.addView(name);
                     EditText tags = new EditText(this); tags.setSingleLine(true); tags.setHint("Thẻ: vui, mèo, chào hỏi…"); tags.setText(entry.tags); form.addView(tags);
-                    new AlertDialog.Builder(this).setTitle("Tên và thẻ GIF").setView(form).setNegativeButton("Hủy", null)
+                    new CaptureProtection.Builder(this).setTitle("Tên và thẻ GIF").setView(form).setNegativeButton("Hủy", null)
                         .setPositiveButton("Lưu", (d, which) -> {
                             String label = name.getText().toString().trim(), keywords = tags.getText().toString().trim();
                             if (label.isEmpty() || label.length() > 160 || keywords.length() > 300) { status.setText("Tên cần 1–160 ký tự; thẻ tối đa 300 ký tự."); return; }
@@ -505,7 +564,7 @@ public final class MainActivity extends Activity implements MobileShell.SendActi
                 } else if (action == 1) {
                     getPreferences(MODE_PRIVATE).edit().putBoolean("gif_fav_" + entry.id, !entry.favorite).apply(); renderGallery();
                 } else {
-                    new AlertDialog.Builder(this).setTitle("Xóa GIF khỏi máy?").setMessage(entry.name)
+                    new CaptureProtection.Builder(this).setTitle("Xóa GIF khỏi máy?").setMessage(entry.name)
                         .setNegativeButton("Hủy", null).setPositiveButton("Xóa", (d, which) -> new Thread(() -> {
                             boolean deleted = !file.exists() || file.delete();
                             if (deleted) getPreferences(MODE_PRIVATE).edit().remove("gif_" + entry.id).remove("gif_tags_" + entry.id).remove("gif_fav_" + entry.id).apply();
@@ -529,7 +588,7 @@ public final class MainActivity extends Activity implements MobileShell.SendActi
                 runOnUiThread(() -> {
                     button.setEnabled(true);
                     status.setText("Đã xác minh APK release " + result.tag);
-                    new AlertDialog.Builder(this)
+                    new CaptureProtection.Builder(this)
                         .setTitle("Cài cập nhật đã xác minh?")
                         .setMessage("Android sẽ hỏi lại trước khi cài. Bản thử này chỉ dùng chữ ký debug; chưa phải kênh phát hành ổn định.")
                         .setNegativeButton("Để sau", null)
@@ -632,7 +691,7 @@ public final class MainActivity extends Activity implements MobileShell.SendActi
             Button remove=new Button(this);remove.setText("Xóa");remove.setOnClickListener(v->{
                 if(!templatesReady||templatesSaving)return;
                 final long revision=templateRevision;
-                showTemplateDialog(new AlertDialog.Builder(this).setMessage("Xóa mẫu này khỏi máy?").setNegativeButton("Hủy",null).setPositiveButton("Xóa",(dialog,which)->{
+                showTemplateDialog(new CaptureProtection.Builder(this).setMessage("Xóa mẫu này khỏi máy?").setNegativeButton("Hủy",null).setPositiveButton("Xóa",(dialog,which)->{
                     if(revision!=templateRevision){Toast.makeText(this,"Kho mẫu đã thay đổi. Hãy chọn lại.",Toast.LENGTH_SHORT).show();return;}
                     ArrayList<String> next=new ArrayList<>(templates);next.remove(position);persistTemplates(next,ok->{});
                 }));
@@ -662,7 +721,7 @@ public final class MainActivity extends Activity implements MobileShell.SendActi
         };
         refreshTemplatePicker=refresh;refresh.run();
         search.addTextChangedListener(new TextWatcher(){public void beforeTextChanged(CharSequence s,int st,int count,int after){}public void onTextChanged(CharSequence s,int st,int before,int count){refresh.run();}public void afterTextChanged(Editable e){}});
-        AlertDialog picker=new AlertDialog.Builder(this).setTitle("Mẫu tin nhanh • trên máy").setView(content).setNegativeButton("Đóng",null).create();templatePickerDialog=picker;templateDialogs.add(picker);
+        AlertDialog picker=new CaptureProtection.Builder(this).setTitle("Mẫu tin nhanh • trên máy").setView(content).setNegativeButton("Đóng",null).create();templatePickerDialog=picker;templateDialogs.add(picker);
         picker.setOnDismissListener(dialog->{templateDialogs.remove(picker);if(templatePickerDialog==picker){templatePickerDialog=null;refreshTemplatePicker=null;}});picker.show();
     }
 
@@ -672,7 +731,7 @@ public final class MainActivity extends Activity implements MobileShell.SendActi
         String expanded=nativeExpandTemplate(template,name,time,date);
         if(expanded==null||expanded.length()>4000){Toast.makeText(this,"Mẫu sau khi thay biến quá dài hoặc không hợp lệ.",Toast.LENGTH_LONG).show();return;}
         final String text=expanded;
-        showTemplateDialog(new AlertDialog.Builder(this).setTitle("Xem trước • "+name).setMessage(text).setNegativeButton("Hủy",null).setPositiveButton("Chèn vào ô nhập",(dialog,which)->{
+        showTemplateDialog(new CaptureProtection.Builder(this).setTitle("Xem trước • "+name).setMessage(text).setNegativeButton("Hủy",null).setPositiveButton("Chèn vào ô nhập",(dialog,which)->{
             if(!uiLifecycle.accepts(ticket))return;
             if(templatePickerDialog!=null)templatePickerDialog.dismiss();insert.accept(text);
         }));
@@ -680,7 +739,7 @@ public final class MainActivity extends Activity implements MobileShell.SendActi
 
     private void previewTemplate(String template) {
         EditText recipient=new EditText(this);recipient.setSingleLine(true);recipient.setHint("Tên người nhận để thay {ten}");
-        showTemplateDialog(new AlertDialog.Builder(this).setTitle("Chuẩn bị mẫu tin").setView(recipient).setNegativeButton("Hủy",null).setPositiveButton("Xem trước",(dialog,which)->previewExpandedTemplate(template,recipient.getText().toString(),text->draft.append((draft.length()==0?"":"\n")+text))));
+        showTemplateDialog(new CaptureProtection.Builder(this).setTitle("Chuẩn bị mẫu tin").setView(recipient).setNegativeButton("Hủy",null).setPositiveButton("Xem trước",(dialog,which)->previewExpandedTemplate(template,recipient.getText().toString(),text->draft.append((draft.length()==0?"":"\n")+text))));
     }
 
     private void editTemplate(int position) {
@@ -690,7 +749,7 @@ public final class MainActivity extends Activity implements MobileShell.SendActi
         final long revision=templateRevision;
         EditText text=new EditText(this);text.setMinLines(2);text.setMaxLines(5);text.setHint("Nội dung mẫu, hỗ trợ {ten}, {gio}, {ngay}");
         if(position>=0)text.setText(templates.get(position));
-        AlertDialog editor=showTemplateDialog(new AlertDialog.Builder(this).setTitle(position<0?"Tạo mẫu":"Sửa mẫu").setView(text).setNegativeButton("Hủy",null).setPositiveButton("Lưu",null));
+        AlertDialog editor=showTemplateDialog(new CaptureProtection.Builder(this).setTitle(position<0?"Tạo mẫu":"Sửa mẫu").setView(text).setNegativeButton("Hủy",null).setPositiveButton("Lưu",null));
         editor.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(v->{
             String normalized=nativeNormalizeTemplate(text.getText().toString());
             if(normalized==null){text.setError("Mẫu phải có 1–120 ký tự hợp lệ.");return;}

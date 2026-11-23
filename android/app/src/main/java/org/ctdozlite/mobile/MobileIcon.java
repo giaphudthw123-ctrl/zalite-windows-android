@@ -23,6 +23,7 @@ final class MobileIcon extends Drawable {
         else if(kind==12) { Path arrow=new Path();arrow.moveTo(4,3);arrow.lineTo(22,12);arrow.lineTo(4,21);arrow.lineTo(8,12);arrow.close();canvas.drawPath(arrow,paint);canvas.drawLine(8,12,16,12,paint); }
         else if(kind==13) { canvas.drawArc(4,4,20,20,35,290,false,paint);canvas.drawLine(20,4,20,10,paint);canvas.drawLine(14,10,20,10,paint); }
         else if(kind==14) { canvas.drawRoundRect(3,4,21,18,3,3,paint);Path bolt=new Path();bolt.moveTo(13,6);bolt.lineTo(9,12);bolt.lineTo(14,12);bolt.lineTo(11,17);canvas.drawPath(bolt,paint); }
+        else if(kind==16) {Path shield=new Path();shield.moveTo(12,2);shield.lineTo(21,6);shield.lineTo(19,16);shield.lineTo(12,22);shield.lineTo(5,16);shield.lineTo(3,6);shield.close();canvas.drawPath(shield,paint);canvas.drawLine(8,12,11,15,paint);canvas.drawLine(11,15,16,9,paint);}
         else { canvas.drawRoundRect(1,4,23,20,3,3,paint);paint.setStyle(Paint.Style.FILL);paint.setTextSize(9);paint.setTypeface(Typeface.DEFAULT_BOLD);canvas.drawText("GIF",4,15,paint);paint.setStyle(Paint.Style.STROKE); }
         canvas.restore();
     }

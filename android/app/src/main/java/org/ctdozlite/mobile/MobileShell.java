@@ -19,6 +19,7 @@ final class MobileShell {
     private final Runnable tools;
     private final Runnable login;
     private final Runnable refresh;
+    private final java.util.function.Consumer<String> utility;
     private org.json.JSONArray conversations=new org.json.JSONArray();
     private boolean demo, limited, recentLoading, inConversation;
     private final java.util.Map<String,String> drafts=new java.util.HashMap<>();
@@ -41,7 +42,7 @@ final class MobileShell {
     private String localSessionLabel = "Zalite • chưa kết nối tài khoản Zalo";
     private TextView connectionNote;
     void setLocalSessionLabel(String value) { localSessionLabel=value; if(connectionNote!=null)connectionNote.setText(value); }
-    MobileShell(Activity activity, Runnable tools, Runnable login,Runnable refresh,SendActions sends) { this.activity = activity; this.tools = tools; this.login = login;this.refresh=refresh;this.sends=sends; }
+    MobileShell(Activity activity, Runnable tools, Runnable login,Runnable refresh,SendActions sends,java.util.function.Consumer<String> utility) { this.activity = activity; this.tools = tools; this.login = login;this.refresh=refresh;this.sends=sends;this.utility=utility; }
     private int dp(int n) { return Math.round(n * activity.getResources().getDisplayMetrics().density); }
     private TextView text(String value, int size, int color) {
         TextView view = new TextView(activity); view.setText(value); view.setTextSize(size); view.setTextColor(color); return view;
@@ -104,9 +105,31 @@ final class MobileShell {
                 if(BuildConfig.DEBUG){Button examples=new Button(activity);examples.setAllCaps(false);examples.setText("Xem hội thoại mẫu • dữ liệu thử");examples.setOnClickListener(v->loadExamples());body.addView(examples);}
             }
         } else if(index==1) empty("Danh bạ", "Bạn bè  •  Nhóm  •  OA\nChưa có dữ liệu danh bạ Zalo được kết nối.", "Mở tiện ích", tools);
-        else if(index==2) empty("Tiện ích của bạn", "Thư viện GIF cá nhân, mẫu trả lời nhanh và cập nhật ứng dụng.", "GIF và mẫu tin", tools);
+        else if(index==2) utilities(false);
         else if(index==3) empty("Nhật ký", "Chưa có kết nối dữ liệu Nhật ký Zalo.", "Về tin nhắn", () -> select(0));
-        else empty("Cá nhân", "Zalite\nDữ liệu cục bộ trên thiết bị này", "Bản nháp của tôi", this::draft);
+        else utilities(true);
+    }
+    private void utilities(boolean personal) {
+        ScrollView scroll=new ScrollView(activity);LinearLayout list=new LinearLayout(activity);list.setOrientation(LinearLayout.VERTICAL);list.setPadding(0,dp(8),0,dp(16));list.setBackgroundColor(0xfff3f5f8);scroll.addView(list);body.addView(scroll,new LinearLayout.LayoutParams(-1,0,1));
+        if(personal) {
+            LinearLayout identity=new LinearLayout(activity);identity.setGravity(Gravity.CENTER_VERTICAL);identity.setPadding(dp(16),dp(20),dp(16),dp(20));identity.setBackgroundColor(Color.WHITE);
+            ImageView avatar=new ImageView(activity);avatar.setImageDrawable(new MobileIcon(4));avatar.setColorFilter(blue);avatar.setPadding(dp(12),dp(12),dp(12),dp(12));avatar.setBackground(background(0xffe3efff,28));identity.addView(avatar,new LinearLayout.LayoutParams(dp(56),dp(56)));
+            LinearLayout details=new LinearLayout(activity);details.setOrientation(LinearLayout.VERTICAL);details.setPadding(dp(14),0,0,0);TextView name=text("Zalite của bạn",20,0xff172334);name.setTypeface(null,Typeface.BOLD);details.addView(name);details.addView(text("Tiện ích riêng trên thiết bị",13,muted));identity.addView(details,new LinearLayout.LayoutParams(0,-2,1));identity.setOnClickListener(v->utility.accept("privacy"));identity.setContentDescription("Zalite của bạn, mở bảo mật cục bộ");list.addView(identity);
+        }
+        TextView heading=text(personal?"TIỆN ÍCH CÁ NHÂN":"TIỆN ÍCH TRÊN THIẾT BỊ",12,muted);heading.setPadding(dp(16),dp(20),dp(16),dp(10));list.addView(heading);
+        utilityRow(list,15,"GIF và sticker","Nhập, tìm kiếm và quản lý thư viện",0xffa463dd,()->utility.accept("gif"));
+        utilityRow(list,14,"Mẫu tin nhanh","Tạo, sửa và tìm mẫu đã mã hóa",blue,()->utility.accept("templates"));
+        utilityRow(list,0,"Bản nháp của tôi","Lưu riêng trên máy, chưa gửi Zalo",0xff18a69b,this::draft);
+        TextView settings=text("CÀI ĐẶT",12,muted);settings.setPadding(dp(16),dp(20),dp(16),dp(10));list.addView(settings);
+        utilityRow(list,16,"Bảo mật và riêng tư","Hạn chế chụp màn hình ứng dụng",0xffea9b29,()->utility.accept("privacy"));
+        utilityRow(list,13,"Cập nhật ứng dụng","Xem kênh GitHub và bản cập nhật",0xff5485df,()->utility.accept("updates"));
+        TextView note=text("Đây là tiện ích của Zalite, không phải hồ sơ hay quyền zBusiness chính thức.",12,muted);note.setPadding(dp(16),dp(16),dp(16),0);list.addView(note);
+    }
+    private void utilityRow(LinearLayout list,int kind,String title,String subtitle,int tint,Runnable action) {
+        LinearLayout row=new LinearLayout(activity);row.setGravity(Gravity.CENTER_VERTICAL);row.setPadding(dp(16),dp(14),dp(16),dp(14));row.setBackgroundColor(Color.WHITE);row.setMinimumHeight(dp(76));
+        ImageView glyph=new ImageView(activity);glyph.setImageDrawable(new MobileIcon(kind));glyph.setColorFilter(tint);glyph.setPadding(dp(8),dp(8),dp(8),dp(8));glyph.setBackground(background(0xfff1f5fa,12));row.addView(glyph,new LinearLayout.LayoutParams(dp(40),dp(40)));
+        LinearLayout copy=new LinearLayout(activity);copy.setOrientation(LinearLayout.VERTICAL);copy.setPadding(dp(14),0,dp(8),0);copy.addView(text(title,16,0xff172334));TextView description=text(subtitle,12,muted);description.setPadding(0,dp(3),0,0);copy.addView(description);row.addView(copy,new LinearLayout.LayoutParams(0,-2,1));row.addView(text("›",24,muted));row.setContentDescription(title+", "+subtitle);row.setFocusable(true);row.setOnClickListener(v->action.run());list.addView(row,new LinearLayout.LayoutParams(-1,-2));
+        android.view.View divider=new android.view.View(activity);divider.setBackgroundColor(0xffedf0f4);list.addView(divider,new LinearLayout.LayoutParams(-1,dp(1)));
     }
     private void renderConversations() {
         TextView banner=text(demo?"DỮ LIỆU THỬ • không phải tài khoản thật":limited?"Tin gần đây đã giới hạn; chưa phải toàn bộ lịch sử":"Tin gần đây • chưa phải toàn bộ lịch sử",12,muted);banner.setPadding(dp(16),dp(8),dp(16),dp(8));body.addView(banner);
@@ -141,14 +164,14 @@ final class MobileShell {
         }
         scroll.post(()->scroll.fullScroll(android.view.View.FOCUS_DOWN));
         LinearLayout toolbar=new LinearLayout(activity);toolbar.setGravity(Gravity.CENTER_VERTICAL);toolbar.setPadding(dp(4),0,dp(4),0);toolbar.setBackgroundColor(0xfff7f9fc);
-        ImageButton gif=icon(15,"GIF và sticker cá nhân",blue,tools);toolbar.addView(gif,new LinearLayout.LayoutParams(dp(48),dp(48)));
+        ImageButton gif=icon(15,"GIF và sticker cá nhân",blue,()->utility.accept("gif"));toolbar.addView(gif,new LinearLayout.LayoutParams(dp(48),dp(48)));
         ImageButton quick=icon(14,"Mẫu tin nhanh",blue,tools);toolbar.addView(quick,new LinearLayout.LayoutParams(dp(48),dp(48)));root.addView(toolbar);
         String key=(entry.optBoolean("group")?"g:":"u:")+entry.optString("id");
         final boolean demoChat=demo;final String account=conversationAccount;
         LinearLayout composer=new LinearLayout(activity);composer.setGravity(Gravity.CENTER_VERTICAL);composer.setPadding(dp(4),dp(4),dp(4),dp(4));
         EditText input=new EditText(activity);input.setTextSize(16);input.setPadding(dp(12),dp(10),dp(12),dp(10));input.setBackground(background(0xfff1f4f8,20));input.setMinLines(2);input.setMaxLines(5);input.setFilters(new android.text.InputFilter[]{new android.text.InputFilter.LengthFilter(4000)});input.setHint(demoChat?"Nhập tin thử…":"Tin nhắn");input.setText(drafts.getOrDefault(key,""));composer.addView(input,new LinearLayout.LayoutParams(0,-2,1));
         ImageButton send=icon(12,demoChat?"Gửi tin thử trên máy":"Gửi tin nhắn",blue,()->{});composer.addView(send,new LinearLayout.LayoutParams(dp(48),dp(48)));root.addView(composer);
-        toolbar.addView(icon(9,"Chèn biểu cảm",muted,()->new android.app.AlertDialog.Builder(activity).setTitle("Biểu cảm").setItems(new String[]{"😊","❤️","👍","😂","🎉","🙏"},(dialog,which)->{String value=new String[]{"😊","❤️","👍","😂","🎉","🙏"}[which];int start=Math.max(0,input.getSelectionStart()),end=Math.max(start,input.getSelectionEnd());input.getText().replace(start,end,value);}).setNegativeButton("Đóng",null).show()),new LinearLayout.LayoutParams(dp(48),dp(48)));
+        toolbar.addView(icon(9,"Chèn biểu cảm",muted,()->new CaptureProtection.Builder(activity).setTitle("Biểu cảm").setItems(new String[]{"😊","❤️","👍","😂","🎉","🙏"},(dialog,which)->{String value=new String[]{"😊","❤️","👍","😂","🎉","🙏"}[which];int start=Math.max(0,input.getSelectionStart()),end=Math.max(start,input.getSelectionEnd());input.getText().replace(start,end,value);}).setNegativeButton("Đóng",null).show()),new LinearLayout.LayoutParams(dp(48),dp(48)));
         TextView result=text(demoChat?SendStatus.describe("local_demo"):"Gửi thử nghiệm chưa được kiểm chứng bằng tài khoản thật",11,muted);result.setPadding(dp(12),dp(4),dp(12),dp(6));root.addView(result);
         quick.setOnClickListener(v->{
             String expected=input.getText().toString();int start=Math.max(0,input.getSelectionStart()),end=Math.max(start,input.getSelectionEnd());
@@ -168,7 +191,7 @@ final class MobileShell {
                     try{org.json.JSONArray list=entry.optJSONArray("messages");if(list==null){list=new org.json.JSONArray();entry.put("messages",list);}long now=System.currentTimeMillis();list.put(new org.json.JSONObject().put("id",value.optString("ticket")).put("text",content).put("ts",now).put("outgoing",true).put("send_state",phase));while(list.length()>100){list.remove(0);limited=true;}entry.put("ts",now);if(input.getText().toString().equals(content)){drafts.remove(key);input.setText("");}if(inConversation&&activeConversationKey.equals(key))openConversation(entry);}catch(org.json.JSONException error){result.setText("Đã nhận kết quả nhưng không cập nhật được phần xem trước.");}
                 }
             };
-            if(demoChat){new android.app.AlertDialog.Builder(activity).setTitle("Gửi trong bản xem thử").setMessage("Người nhận: "+SendStatus.previewName(entry.optString("name"))+"\n\n"+content+"\n\nChỉ thêm dữ liệu mẫu trên máy, không gửi qua Zalo.").setPositiveButton("Thêm tin thử",(dialog,which)->{org.json.JSONObject value=new org.json.JSONObject();try{value.put("phase","local_demo");}catch(org.json.JSONException error){throw new IllegalStateException(error);}completed.accept(value);}).setNegativeButton("Hủy",(dialog,which)->send.setEnabled(true)).setOnCancelListener(dialog->send.setEnabled(true)).show();}
+            if(demoChat){new CaptureProtection.Builder(activity).setTitle("Gửi trong bản xem thử").setMessage("Người nhận: "+SendStatus.previewName(entry.optString("name"))+"\n\n"+content+"\n\nChỉ thêm dữ liệu mẫu trên máy, không gửi qua Zalo.").setPositiveButton("Thêm tin thử",(dialog,which)->{org.json.JSONObject value=new org.json.JSONObject();try{value.put("phase","local_demo");}catch(org.json.JSONException error){throw new IllegalStateException(error);}completed.accept(value);}).setNegativeButton("Hủy",(dialog,which)->send.setEnabled(true)).setOnCancelListener(dialog->send.setEnabled(true)).show();}
             else sends.request(account,entry.optString("id"),entry.optBoolean("group"),entry.optString("name"),content,completed);
         });
     }
@@ -196,8 +219,8 @@ final class MobileShell {
         LinearLayout identity=new LinearLayout(activity); identity.setOrientation(LinearLayout.VERTICAL); identity.addView(text("Bản nháp của tôi",18,Color.WHITE)); identity.addView(text("Chỉ lưu trên thiết bị",12,0xffd9eaff)); header.addView(identity); root.addView(header);
         TextView canvas=text("Nội dung ở đây chưa được gửi qua Zalo.",13,muted); canvas.setGravity(Gravity.CENTER); canvas.setBackgroundColor(0xffeaf0f6); root.addView(canvas,new LinearLayout.LayoutParams(-1,0,1));
         LinearLayout toolbar=new LinearLayout(activity); toolbar.setPadding(dp(12),dp(4),dp(12),dp(4));
-        Button gif=new Button(activity); gif.setText("GIF / Sticker"); gif.setOnClickListener(v->tools.run()); toolbar.addView(gif);
-        Button templates=new Button(activity); templates.setText("Mẫu tin nhanh"); templates.setOnClickListener(v->tools.run()); toolbar.addView(templates); root.addView(toolbar);
+        Button gif=new Button(activity); gif.setText("GIF / Sticker"); gif.setOnClickListener(v->utility.accept("gif")); toolbar.addView(gif);
+        Button templates=new Button(activity); templates.setText("Mẫu tin nhanh"); templates.setOnClickListener(v->utility.accept("templates")); toolbar.addView(templates); root.addView(toolbar);
         EditText input=new EditText(activity); input.setHint("Nhập nội dung bản nháp…"); input.setMinLines(2); input.setMaxLines(6); input.setPadding(dp(16),dp(12),dp(16),dp(12)); input.setText(activity.getPreferences(0).getString("local_chat_draft","")); root.addView(input);
         input.addTextChangedListener(new android.text.TextWatcher(){ public void beforeTextChanged(CharSequence s,int st,int c,int a){} public void onTextChanged(CharSequence s,int st,int b,int c){activity.getPreferences(0).edit().putString("local_chat_draft",s.toString()).apply();} public void afterTextChanged(android.text.Editable e){} });
     }

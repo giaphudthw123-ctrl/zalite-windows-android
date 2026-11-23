@@ -1,0 +1,20 @@
+{
+  "date": "2026-11-23T19:25:22.0900543+07:00",
+  "device": "emulator-5554 API36 x86_64 320x640",
+  "package": "org.ctdozlite.mobile.internal",
+  "versionCode": 11,
+  "foregroundPssKiB": 44581,
+  "foregroundRssKiB": 173184,
+  "filesKiB": 24,
+  "cacheKiB": 8,
+  "noBackupKiB": 24,
+  "backgroundSample": {
+    "pid": "7899",
+    "clockTicksPerSecond": 100,
+    "ticksStart": 656,
+    "ticksEnd": 656,
+    "seconds": 20.1661872,
+    "oneCoreCpuPercent": 0.0
+  },
+  "limitations": "One synthetic session; fork in foreground; no official-client baseline, real account, network bytes or installed-size measurement."
+}
